@@ -101,7 +101,10 @@ function normalizeRemote(url) {
     .replace(/:\d+\//, '/')
     .replace(/\.git\/?$/, '')
     .replace(/\/+$/, '')
-    .toLowerCase();
+    .toLowerCase()
+    // Azure Repos: SSH and legacy visualstudio.com URLs -> the https form dev.azure.com/org/project/_git/repo
+    .replace(/^(?:vs-)?ssh\.(?:dev\.azure\.com|visualstudio\.com)\/v3\/([^/]+)\/([^/]+)\/([^/]+)$/, 'dev.azure.com/$1/$2/_git/$3')
+    .replace(/^([^/.]+)\.visualstudio\.com\/(?:defaultcollection\/)?([^/]+)\/_git\/([^/]+)$/, 'dev.azure.com/$1/$2/_git/$3');
 }
 
 const ids = new Map();
@@ -139,9 +142,14 @@ const AGENTS = {
   // One folder per project: ~/.claude/projects/<encoded cwd>/{*.jsonl, memory/}
   claude: {
     remote: id => ['projects', ...id.split('/')],
-    local: (input, cwd) => input.transcript_path
-      ? path.dirname(input.transcript_path)
-      : path.join(home('CLAUDE_CONFIG_DIR', '.claude'), 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-')),
+    local(input, cwd) {
+      if (input.transcript_path) return path.dirname(input.transcript_path);
+      // From a git hook: reuse Claude's folder even if the drive letter case differs (d--App vs D--App).
+      const root = path.join(home('CLAUDE_CONFIG_DIR', '.claude'), 'projects'), name = cwd.replace(/[^a-zA-Z0-9]/g, '-');
+      let hit;
+      try { hit = fs.readdirSync(root).find(d => d.toLowerCase() === name.toLowerCase()); } catch {}
+      return path.join(root, hit || name);
+    },
     push: c => syncDir(c.local, c.remote),
   },
   // All projects mixed: $CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl, cwd in the first line.
@@ -203,18 +211,35 @@ function driveRoot(cfg) {
 }
 
 // --- GitHub backend: one local clone of the user's private repo, same layout as the Drive folder.
+const BASE = () => path.join(os.homedir(), '.mem-mastero');
+const CLONE = () => path.join(BASE(), 'repo');
+// MEM_MASTERO_INHIBIT: our own git calls must not trigger mem-mastero's global git hooks (recursion).
+const GIT_ENV = () => ({ ...process.env, GIT_TERMINAL_PROMPT: '0', MEM_MASTERO_INHIBIT: '1' });
 // Fixed identity: commits/rebases must work on machines with no git user configured.
 const git = (dir, ...args) => execFileSync('git', ['-C', dir, '-c', 'user.name=mem-mastero', '-c', 'user.email=mem-mastero@localhost', ...args], {
-  encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+  encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: GIT_ENV(),
 });
 
 function githubClone(url) {
-  const dir = path.join(os.homedir(), '.mem-mastero', 'repo');
+  const dir = CLONE();
   if (!fs.existsSync(path.join(dir, '.git'))) {
     fs.mkdirSync(path.dirname(dir), { recursive: true });
-    execFileSync('git', ['clone', '-q', url, dir], { stdio: 'ignore', env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
+    execFileSync('git', ['clone', '-q', url, dir], { stdio: 'ignore', env: GIT_ENV() });
   }
   return dir;
+}
+
+// One sync at a time per clone: agent hooks, git hooks and background pushes can overlap,
+// and a second pullPush would abort the first one's rebase. Waits up to 30s; a lock older than 2 min is stale.
+function withLock(dir, fn) {
+  const lock = path.join(dir, '.git', 'mem-mastero.lock');
+  for (let waited = 0; ; waited += 250) {
+    try { fs.closeSync(fs.openSync(lock, 'wx')); break; } catch {}
+    try { if (Date.now() - fs.statSync(lock).mtimeMs > 120000) { fs.rmSync(lock, { force: true }); continue; } } catch { continue; }
+    if (waited >= 30000) return false;
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
+  }
+  try { fn(); return true; } finally { fs.rmSync(lock, { force: true }); }
 }
 
 function commit(dir) {
@@ -234,44 +259,117 @@ function readStdin() {
   try { return JSON.parse(fs.readFileSync(0, 'utf8') || '{}'); } catch { return {}; }
 }
 
-function main(name, mode) {
+// Sync the given agents for one repo. mode: start (pull+push), push, pull. loud: always print the summary.
+function run(names, mode, input, loud = mode === 'start') {
   const cfg = readConfig();
-  if (mode === 'gitpush') return pullPush(githubClone(cfg.github)); // detached child of a per-turn hook
-
-  const agent = AGENTS[name];
-  const input = readStdin();
   const cwd = input.cwd || process.cwd();
-  const say = msg => { if (mode === 'start' || process.stdout.isTTY) console.log(`mem-mastero: ${msg}`); };
+  const say = msg => { if (loud || process.stdout.isTTY) console.log(`mem-mastero: ${msg}`); };
 
   const id = repoId(cwd);
   if (!id) return say('no git "origin" remote in this folder, so sync is skipped (the remote URL is how projects are matched across machines).');
 
   const root = cfg.github ? githubClone(cfg.github) : driveRoot(cfg);
   if (!root) return say('no sync target. Install Google Drive for Desktop, or set ~/.mem-mastero.json {"dir": "..."} or {"github": "<private repo url>"}. Sync skipped.');
-  const c = { input, cwd, id, mode, local: agent.local(input, cwd), remote: path.join(root, ...agent.remote(id)) };
+  if (mode === 'start' && fs.existsSync(path.join(BASE(), 'git-hooks'))) refreshHookScript();
 
-  // Push first: with GitHub, local edits get committed so git (not mtimes) merges them with other machines' work.
-  const pushed = mode === 'pull' ? [] : agent.push(c);
-  if (cfg.github) {
-    commit(root);
-    if (mode === 'push') {
-      if (pushed.length) spawn(process.execPath, [__filename, name, 'gitpush'], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
-    } else pullPush(root); // git rewrites mtimes of files it updates, so they count as newer than local
-  }
-  const pulled = mode === 'push' ? [] : syncDir(c.remote, c.local, false);
-  say(`${name} ${id} (${cfg.github ? 'GitHub' : 'Drive'}): pulled ${pulled.length}, pushed ${pushed.length} file(s).`);
+  const work = () => {
+    const jobs = names.map(name => {
+      const agent = AGENTS[name];
+      const c = { input, cwd, id, mode, local: agent.local(input, cwd), remote: path.join(root, ...agent.remote(id)) };
+      // Push first: with GitHub, local edits get committed so git (not mtimes) merges them with other machines' work.
+      return { name, c, pushed: mode === 'pull' ? [] : agent.push(c) };
+    });
+    if (cfg.github) {
+      commit(root);
+      if (mode === 'push') {
+        if (jobs.some(j => j.pushed.length)) spawn(process.execPath, [__filename, 'gitpush'], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+      } else pullPush(root); // git rewrites mtimes of files it updates, so they count as newer than local
+    }
+    for (const { name, c, pushed } of jobs) {
+      const pulled = mode === 'push' ? [] : syncDir(c.remote, c.local, false);
+      if (loud && mode !== 'start' && !pulled.length && !pushed.length) continue;
+      say(`${name} ${id} (${cfg.github ? 'GitHub' : 'Drive'}): pulled ${pulled.length}, pushed ${pushed.length} file(s).`);
+      // Claude may have loaded MEMORY.md before this hook ran, so hand the fresh copy to the session directly.
+      const mem = path.join('memory', 'MEMORY.md');
+      if (mode === 'start' && pulled.includes(mem)) {
+        console.log(`Memory was updated from another device. Current ${path.join(c.local, mem)}:\n${fs.readFileSync(path.join(c.local, mem), 'utf8')}`);
+      }
+    }
+  };
+  if (!cfg.github) return work();
+  if (!withLock(root, work)) say('another sync is still running; skipped this one (the next sync catches up).');
+}
 
-  // Claude may have loaded MEMORY.md before this hook ran, so hand the fresh copy to the session directly.
-  const mem = path.join('memory', 'MEMORY.md');
-  if (mode === 'start' && pulled.includes(mem)) {
-    console.log(`Memory was updated from another device. Current ${path.join(c.local, mem)}:\n${fs.readFileSync(path.join(c.local, mem), 'utf8')}`);
+// --- Git hooks: sync with `git push` / `git pull` / `git clone` in every repo, for every agent.
+// Installed as a global core.hooksPath. Every standard hook name gets a shim that runs the repo's own
+// .git/hooks/<name> afterwards, so existing hooks (LFS, pre-commit, ...) keep working.
+const HOOK_NAMES = ['applypatch-msg', 'pre-applypatch', 'post-applypatch', 'pre-commit', 'pre-merge-commit', 'prepare-commit-msg',
+  'commit-msg', 'post-commit', 'pre-rebase', 'post-checkout', 'post-merge', 'pre-push', 'pre-receive', 'update', 'proc-receive',
+  'post-receive', 'post-update', 'reference-transaction', 'push-to-checkout', 'pre-auto-gc', 'post-rewrite', 'sendemail-validate',
+  'fsmonitor-watchman', 'p4-changelist', 'p4-prepare-changelist', 'p4-post-changelist', 'p4-pre-submit', 'post-index-change'];
+const SYNC_HOOKS = ['pre-push', 'post-merge', 'post-rewrite', 'post-checkout'];
+const hooksDir = () => path.join(BASE(), 'git-hooks');
+const fwd = p => p.replace(/\\/g, '/');
+const globalGit = (...args) => { try { return execFileSync('git', ['config', '--global', ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return ''; } };
+
+// Hooks call a stable copy of this script, so plugin updates (new cache paths) don't break them.
+function refreshHookScript() {
+  const dst = path.join(BASE(), 'sync.js');
+  try { if (fs.readFileSync(dst, 'utf8') === fs.readFileSync(__filename, 'utf8')) return; } catch {}
+  fs.copyFileSync(__filename, dst);
+}
+
+function installGitHooks() {
+  const cur = globalGit('--get', 'core.hooksPath');
+  if (cur && path.resolve(cur) !== path.resolve(hooksDir())) {
+    return console.log(`mem-mastero: git's global core.hooksPath is already "${cur}". Not changing it; git hooks not installed.`);
   }
+  fs.mkdirSync(hooksDir(), { recursive: true });
+  refreshHookScript();
+  const node = fwd(process.execPath), script = fwd(path.join(BASE(), 'sync.js'));
+  for (const name of HOOK_NAMES) {
+    const ours = SYNC_HOOKS.includes(name)
+      ? `[ -z "$MEM_MASTERO_INHIBIT" ] && "${node}" "${script}" git ${name} "$@" </dev/null || true\n` : '';
+    fs.writeFileSync(path.join(hooksDir(), name),
+      `#!/bin/sh\n# mem-mastero global git hook. Runs this repo's own .git/hooks/${name} afterwards.\n${ours}` +
+      `own="$(git rev-parse --git-dir)/hooks/${name}"\n[ -x "$own" ] && exec "$own" "$@"\nexit 0\n`, { mode: 0o755 });
+  }
+  execFileSync('git', ['config', '--global', 'core.hooksPath', fwd(hooksDir())]);
+  console.log(`mem-mastero: git hooks installed (${fwd(hooksDir())}). Undo: node "${script}" uninstall-git-hooks`);
+}
+
+function uninstallGitHooks() {
+  const cur = globalGit('--get', 'core.hooksPath');
+  if (cur && path.resolve(cur) === path.resolve(hooksDir())) globalGit('--unset', 'core.hooksPath');
+  fs.rmSync(hooksDir(), { recursive: true, force: true });
+  console.log('mem-mastero: git hooks removed.');
+}
+
+// Called by the shims. push: before `git push` (in the background, so the push isn't slowed down).
+// pull: after `git pull` (merge or rebase) and after `git clone`. `git fetch` has no hook.
+function gitHook(name, args) {
+  let top;
+  try { top = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return; }
+  if (path.resolve(top).toLowerCase() === path.resolve(CLONE()).toLowerCase()) return; // the memory repo itself
+  if (name === 'pre-push') {
+    return spawn(process.execPath, [__filename, 'git-bg-push', top], { detached: true, stdio: 'ignore', windowsHide: true, env: GIT_ENV() }).unref();
+  }
+  const pull = name === 'post-merge' || (name === 'post-rewrite' && args[0] === 'rebase') || (name === 'post-checkout' && /^0+$/.test(args[0] || ''));
+  if (pull) run(Object.keys(AGENTS), 'pull', { cwd: top }, true);
 }
 
 module.exports = { syncDir, normalizeRemote, headCwd, AGENTS };
 
 if (require.main === module) {
-  const [a, b] = process.argv.slice(2);
-  try { AGENTS[a] ? main(a, b || 'start') : main('claude', a || 'start'); } catch (e) { console.error(`mem-mastero: ${e.message}`); }
-  process.exit(0); // never block the session
+  const [a, b, ...rest] = process.argv.slice(2);
+  try {
+    if (a === 'gitpush' || b === 'gitpush') { const dir = githubClone(readConfig().github); withLock(dir, () => pullPush(dir)); } // background push
+    else if (a === 'install-git-hooks') installGitHooks();
+    else if (a === 'uninstall-git-hooks') uninstallGitHooks();
+    else if (a === 'git') gitHook(b, rest);
+    else if (a === 'git-bg-push') run(Object.keys(AGENTS), 'push', { cwd: b });
+    else if (AGENTS[a]) run([a], b || 'start', readStdin());
+    else run(['claude'], a || 'start', readStdin());
+  } catch (e) { console.error(`mem-mastero: ${e.message}`); }
+  process.exit(0); // never block the session or the git command
 }

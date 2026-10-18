@@ -146,9 +146,38 @@ To use a different folder (for example an `rclone mount` on Linux, or Dropbox or
 
 On first use the repo is cloned to `~/.mem-mastero/repo`.
 
-### Step 3: Repeat on your other machines
+### Step 3 (recommended): Sync on `git push` / `git pull` / `git clone`
 
-Install the plugin in the same agents and set up the same backend. Open the repo and your history arrives.
+This makes memory follow your code. It works with GitHub, Azure Repos, GitLab and Bitbucket, from the terminal, VS Code, Visual Studio or any git client. It also works for every agent, even when no agent is open.
+
+| You run | mem-mastero does |
+|---|---|
+| `git push` | uploads this repo's sessions and memory, in the background, so your push isn't slowed down |
+| `git pull` (merge or rebase) | downloads them into Claude Code / Codex / Copilot / Pi's folders |
+| `git clone` | downloads them for the fresh clone |
+
+Turn it on once per machine:
+
+```bash
+node ~/.claude/plugins/marketplaces/mem-mastero/sync.js install-git-hooks
+```
+
+That path is where Claude Code keeps the plugin. With Codex it's `~/.codex/.tmp/marketplaces/mem-mastero/sync.js`, but any copy of `sync.js` works. The command copies itself to `~/.mem-mastero/sync.js` and sets git's global `core.hooksPath` to `~/.mem-mastero/git-hooks`. Undo it with:
+
+```bash
+node ~/.mem-mastero/sync.js uninstall-git-hooks
+```
+
+Good to know:
+
+- **Your repos' own hooks keep working.** Every hook mem-mastero installs runs the repo's `.git/hooks/<name>` afterwards (Git LFS, pre-commit, and so on).
+- **It won't overwrite another global hooks path.** If you already set a global `core.hooksPath`, install refuses and changes nothing. Repos that set their own local `core.hooksPath` (for example Husky) keep their hooks, but don't get git-triggered sync. The agent hooks still sync them.
+- **`git fetch` alone has no git hook**, and neither does a `git pull` that says "Already up to date". Memory still arrives when you next start your agent.
+- **New clones:** the clone path can differ from the folder your agent later opens (for example a different drive-letter case), so agent startup remains the guaranteed sync. Treat the clone sync as a head start.
+
+### Step 4: Repeat on your other machines
+
+Install the plugin in the same agents, set up the same backend, and (optionally) the git hooks. Open or pull the repo and your history arrives.
 
 ---
 
@@ -224,6 +253,7 @@ GitHub rejects any file over 100 MB, and long agent sessions can grow past that.
 | Codex | `codex plugin remove mem-mastero` |
 | Copilot CLI | `copilot plugin uninstall mem-mastero` |
 | Pi | `pi remove git:github.com/Shaf2665/mem-mastero` |
+| Git hooks | `node ~/.mem-mastero/sync.js uninstall-git-hooks` |
 
 Your synced data stays in Drive or the repo. Delete `~/.mem-mastero.json` and `~/.mem-mastero/` to remove the local config and clone.
 

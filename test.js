@@ -8,6 +8,11 @@ const { syncDir, normalizeRemote } = require('./sync');
 for (const u of ['git@github.com:o/R.git', 'https://github.com/o/r', 'https://user@github.com/o/r.git/', 'ssh://git@github.com:22/o/r.git']) {
   assert.strictEqual(normalizeRemote(u), 'github.com/o/r', u);
 }
+// Azure Repos: every URL form of one repo maps to the same project
+for (const u of ['https://Org@dev.azure.com/Org/Proj/_git/Repo', 'git@ssh.dev.azure.com:v3/Org/Proj/Repo', 'https://org.visualstudio.com/Proj/_git/Repo',
+  'https://org.visualstudio.com/DefaultCollection/Proj/_git/Repo', 'org@vs-ssh.visualstudio.com:v3/org/Proj/Repo']) {
+  assert.strictEqual(normalizeRemote(u), 'dev.azure.com/org/proj/_git/repo', u);
+}
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mem-mastero-'));
 const A = path.join(tmp, 'D--Work-repo'), B = path.join(tmp, 'C--Users-x-repo'), drive = path.join(tmp, 'drive');
@@ -118,6 +123,56 @@ assert.match(MA.run('pi', 'start'), /pushed 1 file/);
   MB.run('claude', 'pull');
   assert(!fs.existsSync(path.join(claudeDir(MB), 'big.jsonl')), 'incomplete parts are skipped');
   fs.rmSync(t, { recursive: true });
+
+  await gitHooksTest();
   console.log('ok');
 })();
+
+// Git hooks: `git clone` / `git push` / `git pull` sync memory on two isolated "machines" (own home + global git config).
+async function gitHooksTest() {
+  const g = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'mem-mastero-git-'))); // long path, as git reports it
+  const origin = path.join(g, 'origin.git'), hub2 = path.join(g, 'hub');
+  execFileSync('git', ['init', '-q', '--bare', origin]);
+  const box = name => {
+    const h = path.join(g, name);
+    fs.mkdirSync(h, { recursive: true });
+    const env = { ...process.env, USERPROFILE: h, HOME: h, GIT_CONFIG_GLOBAL: path.join(h, '.gitconfig'), MEM_MASTERO_DIR: hub2, CLAUDE_CONFIG_DIR: path.join(h, '.claude'), CODEX_HOME: path.join(h, '.codex'), COPILOT_HOME: path.join(h, '.copilot'), PI_CODING_AGENT_DIR: path.join(h, '.pi', 'agent') };
+    delete env.MEM_MASTERO_INHIBIT; delete env.MEM_MASTERO_PART_BYTES;
+    const sh = (args, cwd = h) => execFileSync('git', args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    for (const [k, v] of [['user.name', 't'], ['user.email', 't@t'], ['core.autocrlf', 'false'], ['init.defaultBranch', 'main']]) sh(['config', '--global', k, v]);
+    const out = execFileSync(process.execPath, [path.join(__dirname, 'sync.js'), 'install-git-hooks'], { env, encoding: 'utf8' });
+    assert.match(out, /git hooks installed/);
+    const repo = path.join(h, 'work', 'app');
+    const mem = () => path.join(h, '.claude', 'projects', repo.replace(/[^a-zA-Z0-9]/g, '-'), 'memory', 'MEMORY.md');
+    return { h, env, sh, repo, mem };
+  };
+  const waitFor = async (f, ms = 15000) => { for (const end = Date.now() + ms; Date.now() < end; await new Promise(r => setTimeout(r, 200))) if (f()) return true; return false; };
+  const A = box('A'), B = box('B');
+
+  A.sh(['clone', '-q', origin, A.repo]);
+  // The repo's own hooks keep running under mem-mastero's global hooks path.
+  fs.writeFileSync(path.join(A.repo, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\necho ran > "$(git rev-parse --git-dir)/own-hook-ran"\n', { mode: 0o755 });
+  put(A.mem(), '- fact from A\n');
+  fs.writeFileSync(path.join(A.repo, 'f.txt'), '1');
+  A.sh(['add', '.'], A.repo); A.sh(['commit', '-qm', 'one'], A.repo);
+  assert(fs.existsSync(path.join(A.repo, '.git', 'own-hook-ran')), 'repo\'s own pre-commit hook still runs');
+  A.sh(['push', '-q', 'origin', 'HEAD'], A.repo);
+  const hubMem = path.join(hub2, 'projects', ...normalizeRemote(origin).split('/'), 'memory', 'MEMORY.md');
+  assert(await waitFor(() => fs.existsSync(hubMem)), 'git push uploads memory (background)');
+
+  B.sh(['clone', '-q', origin, B.repo]);
+  assert.strictEqual(fs.readFileSync(B.mem(), 'utf8'), '- fact from A\n', 'git clone downloads memory');
+
+  const later3 = new Date(Date.now() + 10000);
+  put(A.mem(), '- fact from A\n- newer fact\n'); fs.utimesSync(A.mem(), later3, later3);
+  fs.writeFileSync(path.join(A.repo, 'f.txt'), '2');
+  A.sh(['commit', '-qam', 'two'], A.repo); A.sh(['push', '-q'], A.repo);
+  assert(await waitFor(() => fs.readFileSync(hubMem, 'utf8').includes('newer')), 'second push uploads the update');
+  B.sh(['pull', '-q', '--no-rebase'], B.repo);
+  assert.match(fs.readFileSync(B.mem(), 'utf8'), /newer fact/, 'git pull downloads memory');
+
+  execFileSync(process.execPath, [path.join(__dirname, 'sync.js'), 'uninstall-git-hooks'], { env: A.env });
+  assert.throws(() => execFileSync('git', ['config', '--global', '--get', 'core.hooksPath'], { env: A.env, stdio: 'ignore' }), 'uninstall unsets hooksPath');
+  fs.rmSync(g, { recursive: true, force: true });
+}
 
