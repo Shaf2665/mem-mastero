@@ -110,6 +110,21 @@ const AGENTS = {
       return dirs.filter(inside).flatMap(d => syncDir(path.join(c.local, d), path.join(c.remote, d)).map(r => path.join(d, r)));
     },
   },
+  // One folder per cwd: ~/.pi/agent/sessions/--<path>--/<ts>_<id>.jsonl, cwd in the header line.
+  // Pulled sessions land in this machine's folder for the repo, so Pi's /resume lists them.
+  pi: {
+    remote: id => ['pi', 'projects', ...id.split('/')],
+    local: (input, cwd) => input.session_dir || path.join(
+      process.env.PI_CODING_AGENT_SESSION_DIR || path.join(process.env.PI_CODING_AGENT_DIR || path.join(os.homedir(), '.pi', 'agent'), 'sessions'),
+      `--${cwd.replace(/^[\\/]+/, '').replace(/[\\/:]/g, '-')}--`),
+    push(c) {
+      const root = path.dirname(c.local);
+      const current = c.mode === 'push' && c.input.transcript_path && path.relative(root, c.input.transcript_path);
+      const files = inside(current) ? [current]
+        : walk(root).filter(r => r.endsWith('.jsonl') && repoId(headCwd(path.join(root, r))) === c.id);
+      return files.filter(r => syncFile(path.join(root, r), path.join(c.remote, path.basename(r)))).map(r => path.basename(r));
+    },
+  },
 };
 
 function readConfig() {

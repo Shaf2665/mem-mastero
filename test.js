@@ -40,7 +40,7 @@ const machine = m => {
   fs.mkdirSync(repo, { recursive: true });
   execFileSync('git', ['init', '-q', repo]);
   execFileSync('git', ['-C', repo, 'remote', 'add', 'origin', 'git@github.com:me/demo.git']);
-  const env = { ...process.env, USERPROFILE: h, HOME: h, MEM_MASTERO_DIR: hub, CODEX_HOME: path.join(h, '.codex'), COPILOT_HOME: path.join(h, '.copilot'), CLAUDE_CONFIG_DIR: path.join(h, '.claude') };
+  const env = { ...process.env, USERPROFILE: h, HOME: h, MEM_MASTERO_DIR: hub, CODEX_HOME: path.join(h, '.codex'), COPILOT_HOME: path.join(h, '.copilot'), CLAUDE_CONFIG_DIR: path.join(h, '.claude'), PI_CODING_AGENT_DIR: path.join(h, '.pi', 'agent') };
   const run = (agent, mode, input = {}) => execFileSync(process.execPath, [path.join(__dirname, 'sync.js'), agent, mode], { env, input: JSON.stringify({ cwd: repo, ...input }), encoding: 'utf8' });
   return { h, repo, env, run, codex: path.join(env.CODEX_HOME, 'sessions'), copilot: path.join(env.COPILOT_HOME, 'session-state') };
 };
@@ -78,5 +78,21 @@ assert.strictEqual(fs.readFileSync(path.join(MA.copilot, 'sid-1', 'plan.md'), 'u
 function walkList(d) { return fs.readdirSync(d, { recursive: true }).filter(f => fs.statSync(path.join(d, f)).isFile()); }
 function walkHas(d, s) { try { return walkList(d).some(f => f.includes(s)); } catch { return false; } }
 
-fs.rmSync(t, { recursive: true });
-console.log('ok');
+// Pi: per-cwd session folders whose names differ per machine; the extension drives sync.js.
+const piDir = m => path.join(m.h, '.pi', 'agent', 'sessions', '--' + m.repo.replace(/^[\\/]+/, '').replace(/[\\/:]/g, '-') + '--');
+put(path.join(piDir(MA), '2026-10-18_s1.jsonl'), JSON.stringify({ type: 'session', version: 3, id: 's1', cwd: MA.repo }) + '\n');
+assert.match(MA.run('pi', 'start'), /pushed 1 file/);
+(async () => {
+  Object.assign(process.env, MB.env);
+  const ext = (await import('./pi/index.js')).default;
+  const handlers = {}, notes = [];
+  ext({ on: (e, h) => { handlers[e] = h; } });
+  assert.deepStrictEqual(Object.keys(handlers).sort(), ['agent_end', 'session_shutdown', 'session_start']);
+  const ctx = { cwd: MB.repo, ui: { notify: m => notes.push(m) }, sessionManager: { getSessionDir: () => piDir(MB), getSessionFile: () => undefined } };
+  await handlers.session_start({}, ctx);
+  assert.match(notes[0], /pi github\.com\/me\/demo .*pulled 1/);
+  assert(fs.existsSync(path.join(piDir(MB), '2026-10-18_s1.jsonl')), 'Pi session pulled into this machine\'s cwd folder');
+  fs.rmSync(t, { recursive: true });
+  console.log('ok');
+})();
+

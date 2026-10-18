@@ -15,6 +15,7 @@ Projects are matched by their **git `origin` URL**, not their folder path. A clo
 |---|---|---|
 | **Claude Code** (CLI, desktop, IDE) | ✅ Supported | Session transcripts + auto-memory (`~/.claude/projects/<project>/`) |
 | **OpenAI Codex** (CLI, desktop app) | ✅ Supported | Session rollouts for this repo (`~/.codex/sessions/**/rollout-*.jsonl`) |
+| **Pi coding agent** (`pi`) | 🧪 Beta | Session files for this repo (`~/.pi/agent/sessions/--<path>--/*.jsonl`) |
 | **GitHub Copilot CLI** | 🧪 Beta | Session folders for this repo (`~/.copilot/session-state/<id>/`) |
 | Copilot Chat in VS Code / JetBrains | ⏳ Not yet | Chats are stored in IDE workspace storage, which isn't keyed by repo |
 | OpenCode | ⏳ Not yet | Sessions live in a SQLite database, so they can't be copied file by file |
@@ -76,6 +77,16 @@ codex plugin add mem-mastero@mem-mastero
 ```
 
 Then run `codex`, open **`/hooks`**, review and **trust** mem-mastero's hooks, and start a new thread. The Codex desktop app uses the same install; restart it afterwards.
+</details>
+
+<details open>
+<summary><b>Pi coding agent</b> (beta)</summary>
+
+```bash
+pi install git:github.com/Shaf2665/mem-mastero
+```
+
+Restart `pi`. At startup you'll see a `mem-mastero: pi ...` notice showing what was synced.
 </details>
 
 <details open>
@@ -143,12 +154,13 @@ Install the plugin in the same agents and set up the same backend. Open the repo
 
 ## How it works
 
-Each agent runs mem-mastero from its own lifecycle hooks:
+Each agent runs mem-mastero from its own lifecycle hooks (a small extension for Pi):
 
 | Agent | Session start | During / end of session |
 |---|---|---|
 | Claude Code | pull + push | push after every reply, and at session end |
 | Codex | pull + push | push the current session after every turn, and at session end |
+| Pi | pull + push | push the current session after every prompt, and at shutdown |
 | Copilot CLI | pull + push | push the session at session end |
 
 The synced folder (Drive or the GitHub repo) looks like this:
@@ -157,6 +169,7 @@ The synced folder (Drive or the GitHub repo) looks like this:
 projects/<host>/<owner>/<repo>/            Claude Code
 codex/projects/<host>/<owner>/<repo>/      Codex   (YYYY/MM/DD/rollout-*.jsonl)
 copilot/projects/<host>/<owner>/<repo>/    Copilot (<session-id>/...)
+pi/projects/<host>/<owner>/<repo>/         Pi      (<timestamp>_<id>.jsonl)
 ```
 
 - For each file, the newer copy wins. If two machines edit the same file between syncs, the one that syncs last wins.
@@ -165,7 +178,7 @@ copilot/projects/<host>/<owner>/<repo>/    Copilot (<session-id>/...)
 - A failing sync never blocks your agent. You get one line of explanation and the session carries on.
 - There are no dependencies: one Node script and git.
 
-Manual sync from inside a repo: `node <plugin-dir>/sync.js <claude|codex|copilot> start`
+Manual sync from inside a repo: `node <plugin-dir>/sync.js <claude|codex|copilot|pi> start`
 
 ## Resuming a session from another machine
 
@@ -174,6 +187,7 @@ Manual sync from inside a repo: `node <plugin-dir>/sync.js <claude|codex|copilot
 | Claude Code | `/resume`, or `claude --resume` |
 | Codex | `codex resume --all`. The default picker only lists sessions whose folder matches the current one exactly, so use `--all` or `codex resume <session-id>` |
 | Copilot CLI | `copilot --resume` |
+| Pi | `/resume`, or `pi --resume`. Pulled sessions are placed in this machine's folder for the repo |
 
 ## Good to know
 
@@ -192,6 +206,7 @@ Manual sync from inside a repo: `node <plugin-dir>/sync.js <claude|codex|copilot
 | Claude Code | `claude plugin uninstall mem-mastero@mem-mastero` |
 | Codex | `codex plugin remove mem-mastero` |
 | Copilot CLI | `copilot plugin uninstall mem-mastero` |
+| Pi | `pi remove git:github.com/Shaf2665/mem-mastero` |
 
 Your synced data stays in Drive or the repo. Delete `~/.mem-mastero.json` and `~/.mem-mastero/` to remove the local config and clone.
 

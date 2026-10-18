@@ -1,0 +1,10 @@
+{
+  "name": "mem-mastero",
+  "version": "0.4.0",
+  "private": true,
+  "description": "Sync coding-agent sessions and memory for each repo across machines via your Google Drive or a private GitHub repo.",
+  "keywords": ["pi-package"],
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/Shaf2665/mem-mastero.git" },
+  "pi": { "extensions": ["./pi/index.js"] }
+}
