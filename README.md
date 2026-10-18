@@ -20,7 +20,7 @@ Projects are matched by their **git `origin` URL**, not their folder path. A clo
 | **Claude Code** (CLI, desktop, IDE) | ✅ Supported | Session transcripts + auto-memory (`~/.claude/projects/<project>/`) |
 | **OpenAI Codex** (CLI, desktop app) | ✅ Supported | Session rollouts for this repo (`~/.codex/sessions/**/rollout-*.jsonl`) |
 | **Pi coding agent** (`pi`) | 🧪 Beta | Session files for this repo (`~/.pi/agent/sessions/--<path>--/*.jsonl`) |
-| **GitHub Copilot CLI** | 🧪 Beta | Session folders for this repo (`~/.copilot/session-state/<id>/`) |
+| **GitHub Copilot CLI** | ✅ Supported | Session folders for this repo (`~/.copilot/session-state/<id>/`) |
 | Copilot Chat in VS Code / JetBrains | ⏳ Not yet | Chats are stored in IDE workspace storage, which isn't keyed by repo |
 | OpenCode | ⏳ Not yet | Sessions live in a SQLite database, so they can't be copied file by file |
 | Gemini CLI / Antigravity | ⏳ Not yet | Different session layout; adapter not written yet |
@@ -94,7 +94,7 @@ Restart `pi`. At startup you'll see a `mem-mastero: pi ...` notice showing what 
 </details>
 
 <details open>
-<summary><b>GitHub Copilot CLI</b> (beta)</summary>
+<summary><b>GitHub Copilot CLI</b></summary>
 
 ```bash
 copilot plugin marketplace add Shaf2665/mem-mastero
@@ -111,7 +111,7 @@ Or inside an interactive Copilot CLI session:
 /plugin install mem-mastero@mem-mastero
 ```
 
-Copilot CLI can also sync sessions to your GitHub account by itself (`/chronicle`). mem-mastero additionally restores the session files on your other machines, so `copilot --resume` finds them there.
+Restart `copilot`. Copilot CLI can also sync sessions to your GitHub account by itself (`/chronicle`). mem-mastero additionally restores the session files on your other machines, so `copilot --resume` finds them there. Machine-local lock files (`inuse.*.lock`) are never synced.
 </details>
 
 ### Step 2: Choose where to sync
@@ -194,7 +194,7 @@ Each agent runs mem-mastero from its own lifecycle hooks (a small extension for 
 | Claude Code | pull + push | push after every reply, and at session end |
 | Codex | pull + push | push the current session after every turn, and at session end |
 | Pi | pull + push | push the current session after every prompt, and at shutdown |
-| Copilot CLI | pull + push | push the session at session end |
+| Copilot CLI | pull + push | push the session on every prompt, and at session end |
 
 The synced folder (Drive or the GitHub repo) looks like this:
 
@@ -236,7 +236,7 @@ GitHub rejects any file over 100 MB, and long agent sessions can grow past that.
 |---|---|
 | Claude Code | `/resume`, or `claude --resume` |
 | Codex | `codex resume --all`. The default picker only lists sessions whose folder matches the current one exactly, so use `--all` or `codex resume <session-id>` |
-| Copilot CLI | `copilot --resume` |
+| Copilot CLI | `copilot --resume`, or `copilot --resume=<session-id>` |
 | Pi | `/resume`, or `pi --resume`. Pulled sessions are placed in this machine's folder for the repo |
 
 ## Good to know

@@ -57,14 +57,23 @@ put(path.join(MA.codex, day, 'rollout-mine.jsonl'), JSON.stringify({ type: 'sess
 put(path.join(MA.codex, day, 'rollout-other.jsonl'), JSON.stringify({ type: 'session_meta', payload: { cwd: t } }) + '\n');
 put(path.join(MA.copilot, 'sid-1', 'events.jsonl'), JSON.stringify({ type: 'session.start', data: { context: { cwd: MA.repo } } }) + '\n');
 put(path.join(MA.copilot, 'sid-1', 'plan.md'), 'plan');
+// Current Copilot CLI: cwd lives in workspace.yaml; inuse.<pid>.lock/.hold are machine-local and never synced.
+put(path.join(MA.copilot, 'sid-2', 'workspace.yaml'), `id: sid-2
+cwd: ${MA.repo}
+branch: main
+`);
+put(path.join(MA.copilot, 'sid-2', 'inuse.4242.lock'), '4242');
+put(path.join(MA.copilot, 'sid-2', 'inuse.4242.hold'), '');
 
 assert.match(MA.run('codex', 'start'), /pushed 1 file/);
-assert.match(MA.run('copilot', 'start'), /pushed 2 file/);
+assert.match(MA.run('copilot', 'start'), /pushed 3 file/);
+assert(!walkHas(hub, 'inuse.'), 'lock files stay on their machine');
 assert(!walkHas(path.join(hub, 'projects'), 'rollout'), 'Claude area must not hold Codex files');
 
 assert.match(MB.run('codex', 'start'), /pulled 1, pushed 0/);
 assert(fs.existsSync(path.join(MB.codex, day, 'rollout-mine.jsonl')) && !fs.existsSync(path.join(MB.codex, day, 'rollout-other.jsonl')));
-assert.match(MB.run('copilot', 'start'), /pulled 2, pushed 0/);
+assert.match(MB.run('copilot', 'start'), /pulled 3, pushed 0/);
+assert(fs.existsSync(path.join(MB.copilot, 'sid-2', 'workspace.yaml')), 'session found via workspace.yaml cwd');
 assert.strictEqual(fs.readFileSync(path.join(MB.copilot, 'sid-1', 'plan.md'), 'utf8'), 'plan');
 assert.match(MB.run('claude', 'start'), /pulled 0, pushed 0/);
 assert(!walkHas(path.join(MB.h, '.claude'), '.'), 'Claude must not pull Codex/Copilot files');

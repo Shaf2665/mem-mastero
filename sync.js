@@ -76,11 +76,14 @@ function syncFile(s, d, toRemote = true) {
 }
 
 // Relative paths of every file under dir; a split file's X.parts/ folder counts as the one file X.
+// Lock files are machine-local (Copilot's inuse.<pid>.lock/.hold mark a session open on *this* PC): never synced.
+const LOCAL_ONLY = /\.(lock|hold)$/;
 function walk(dir, rel = '', out = []) {
   let entries;
   try { entries = fs.readdirSync(path.join(dir, rel), { withFileTypes: true }); } catch { return out; }
   for (const e of entries) {
     const r = path.join(rel, e.name);
+    if (LOCAL_ONLY.test(e.name)) continue;
     if (e.isDirectory() && e.name.endsWith('.parts') && fs.existsSync(path.join(dir, r, 'manifest.json'))) {
       if (!fs.existsSync(path.join(dir, r.slice(0, -6)))) out.push(r.slice(0, -6));
     } else if (e.isDirectory()) walk(dir, r, out); else if (e.isFile()) out.push(r);
@@ -134,6 +137,15 @@ function headCwd(file) {
   } catch { return null; }
 }
 
+// Copilot CLI records a session's folder in workspace.yaml (`cwd: C:\path`); older builds only in events.jsonl.
+function copilotCwd(dir) {
+  try {
+    const m = fs.readFileSync(path.join(dir, 'workspace.yaml'), 'utf8').match(/^cwd:\s*(.+?)\s*$/m);
+    if (m) return m[1].replace(/^(['"])(.*)\1$/, '$2');
+  } catch {}
+  return headCwd(path.join(dir, 'events.jsonl'));
+}
+
 const home = (env, dir) => process.env[env] || path.join(os.homedir(), dir);
 const inside = r => r && !r.startsWith('..') && !path.isAbsolute(r);
 
@@ -171,7 +183,7 @@ const AGENTS = {
       const sid = c.input.sessionId || c.input.session_id;
       let dirs = [];
       if (c.mode === 'push' && sid) dirs = [sid];
-      else try { dirs = fs.readdirSync(c.local).filter(d => repoId(headCwd(path.join(c.local, d, 'events.jsonl'))) === c.id); } catch {}
+      else try { dirs = fs.readdirSync(c.local).filter(d => repoId(copilotCwd(path.join(c.local, d))) === c.id); } catch {}
       return dirs.filter(inside).flatMap(d => syncDir(path.join(c.local, d), path.join(c.remote, d)).map(r => path.join(d, r)));
     },
   },
@@ -256,7 +268,11 @@ function pullPush(dir) {
 }
 
 function readStdin() {
-  try { return JSON.parse(fs.readFileSync(0, 'utf8') || '{}'); } catch { return {}; }
+  let input = {};
+  try { input = JSON.parse(fs.readFileSync(0, 'utf8') || '{}'); } catch {}
+  // Troubleshooting: MEM_MASTERO_LOG=<file> records what each agent's hook sent.
+  if (process.env.MEM_MASTERO_LOG) fs.appendFileSync(process.env.MEM_MASTERO_LOG, JSON.stringify({ at: new Date().toISOString(), argv: process.argv.slice(2), input }) + '\n');
+  return input;
 }
 
 // Sync the given agents for one repo. mode: start (pull+push), push, pull. loud: always print the summary.
@@ -268,7 +284,9 @@ function run(names, mode, input, loud = mode === 'start') {
   const id = repoId(cwd);
   if (!id) return say('no git "origin" remote in this folder, so sync is skipped (the remote URL is how projects are matched across machines).');
 
-  const root = cfg.github ? githubClone(cfg.github) : driveRoot(cfg);
+  // MEM_MASTERO_DIR (env) beats the config file, so one shell can sync somewhere else (e.g. a test folder).
+  const github = !process.env.MEM_MASTERO_DIR && cfg.github;
+  const root = github ? githubClone(cfg.github) : driveRoot(cfg);
   if (!root) return say('no sync target. Install Google Drive for Desktop, or set ~/.mem-mastero.json {"dir": "..."} or {"github": "<private repo url>"}. Sync skipped.');
   if (mode === 'start' && fs.existsSync(path.join(BASE(), 'git-hooks'))) refreshHookScript();
 
@@ -279,7 +297,7 @@ function run(names, mode, input, loud = mode === 'start') {
       // Push first: with GitHub, local edits get committed so git (not mtimes) merges them with other machines' work.
       return { name, c, pushed: mode === 'pull' ? [] : agent.push(c) };
     });
-    if (cfg.github) {
+    if (github) {
       commit(root);
       if (mode === 'push') {
         if (jobs.some(j => j.pushed.length)) spawn(process.execPath, [__filename, 'gitpush'], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
@@ -288,7 +306,7 @@ function run(names, mode, input, loud = mode === 'start') {
     for (const { name, c, pushed } of jobs) {
       const pulled = mode === 'push' ? [] : syncDir(c.remote, c.local, false);
       if (loud && mode !== 'start' && !pulled.length && !pushed.length) continue;
-      say(`${name} ${id} (${cfg.github ? 'GitHub' : 'Drive'}): pulled ${pulled.length}, pushed ${pushed.length} file(s).`);
+      say(`${name} ${id} (${github ? 'GitHub' : 'Drive'}): pulled ${pulled.length}, pushed ${pushed.length} file(s).`);
       // Claude may have loaded MEMORY.md before this hook ran, so hand the fresh copy to the session directly.
       const mem = path.join('memory', 'MEMORY.md');
       if (mode === 'start' && pulled.includes(mem)) {
@@ -296,7 +314,7 @@ function run(names, mode, input, loud = mode === 'start') {
       }
     }
   };
-  if (!cfg.github) return work();
+  if (!github) return work();
   if (!withLock(root, work)) say('another sync is still running; skipped this one (the next sync catches up).');
 }
 
@@ -332,7 +350,8 @@ function installGitHooks() {
       ? `[ -z "$MEM_MASTERO_INHIBIT" ] && "${node}" "${script}" git ${name} "$@" </dev/null || true\n` : '';
     fs.writeFileSync(path.join(hooksDir(), name),
       `#!/bin/sh\n# mem-mastero global git hook. Runs this repo's own .git/hooks/${name} afterwards.\n${ours}` +
-      `own="$(git rev-parse --git-dir)/hooks/${name}"\n[ -x "$own" ] && exec "$own" "$@"\nexit 0\n`, { mode: 0o755 });
+      // No git dir yet (e.g. reference-transaction during `git init`): nothing of the repo's own to run.
+      `gd="$(git rev-parse --git-dir 2>/dev/null)" || exit 0\nown="$gd/hooks/${name}"\n[ -x "$own" ] && exec "$own" "$@"\nexit 0\n`, { mode: 0o755 });
   }
   execFileSync('git', ['config', '--global', 'core.hooksPath', fwd(hooksDir())]);
   console.log(`mem-mastero: git hooks installed (${fwd(hooksDir())}). Undo: node "${script}" uninstall-git-hooks`);

@@ -9,6 +9,14 @@
         "timeoutSec": 60
       }
     ],
+    "userPromptSubmitted": [
+      {
+        "type": "command",
+        "bash": "node \"${PLUGIN_ROOT}/sync.js\" copilot push",
+        "powershell": "node \"${PLUGIN_ROOT}\\sync.js\" copilot push",
+        "timeoutSec": 60
+      }
+    ],
     "sessionEnd": [
       {
         "type": "command",
