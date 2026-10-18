@@ -1,6 +1,6 @@
 {
   "name": "mem-mastero",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "private": true,
   "description": "Sync coding-agent sessions and memory for each repo across machines via your Google Drive or a private GitHub repo.",
   "keywords": [

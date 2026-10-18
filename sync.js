@@ -379,7 +379,15 @@ function gitHook(name, args) {
 
 module.exports = { syncDir, normalizeRemote, headCwd, AGENTS };
 
+// Git runs hooks with repo-local variables (GIT_DIR, GIT_INDEX_FILE, ...) pointing at the repo being pushed.
+// Inherited, they would aim every git call here, including commit/push of the memory repo, at *that* repo
+// (this leaked memory into a public repo once). Clear them first: `git rev-parse --local-env-vars`.
+const GIT_LOCAL_ENV = ['GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_CONFIG', 'GIT_CONFIG_PARAMETERS', 'GIT_CONFIG_COUNT', 'GIT_OBJECT_DIRECTORY',
+  'GIT_DIR', 'GIT_WORK_TREE', 'GIT_IMPLICIT_WORK_TREE', 'GIT_GRAFT_FILE', 'GIT_INDEX_FILE', 'GIT_NO_REPLACE_OBJECTS', 'GIT_REPLACE_REF_BASE',
+  'GIT_PREFIX', 'GIT_SHALLOW_FILE', 'GIT_COMMON_DIR', 'GIT_QUARANTINE_PATH'];
+
 if (require.main === module) {
+  for (const k of GIT_LOCAL_ENV) delete process.env[k];
   const [a, b, ...rest] = process.argv.slice(2);
   try {
     if (a === 'gitpush' || b === 'gitpush') { const dir = githubClone(readConfig().github); withLock(dir, () => pullPush(dir)); } // background push

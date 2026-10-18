@@ -142,11 +142,13 @@ async function gitHooksTest() {
   const g = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'mem-mastero-git-'))); // long path, as git reports it
   const origin = path.join(g, 'origin.git'), hub2 = path.join(g, 'hub');
   execFileSync('git', ['init', '-q', '--bare', origin]);
-  const box = name => {
+  const box = (name, memoryRepo) => {
     const h = path.join(g, name);
     fs.mkdirSync(h, { recursive: true });
+    if (memoryRepo) fs.writeFileSync(path.join(h, '.mem-mastero.json'), JSON.stringify({ github: memoryRepo }));
     const env = { ...process.env, USERPROFILE: h, HOME: h, GIT_CONFIG_GLOBAL: path.join(h, '.gitconfig'), MEM_MASTERO_DIR: hub2, CLAUDE_CONFIG_DIR: path.join(h, '.claude'), CODEX_HOME: path.join(h, '.codex'), COPILOT_HOME: path.join(h, '.copilot'), PI_CODING_AGENT_DIR: path.join(h, '.pi', 'agent') };
     delete env.MEM_MASTERO_INHIBIT; delete env.MEM_MASTERO_PART_BYTES;
+    if (memoryRepo) delete env.MEM_MASTERO_DIR;
     const sh = (args, cwd = h) => execFileSync('git', args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
     for (const [k, v] of [['user.name', 't'], ['user.email', 't@t'], ['core.autocrlf', 'false'], ['init.defaultBranch', 'main']]) sh(['config', '--global', k, v]);
     const out = execFileSync(process.execPath, [path.join(__dirname, 'sync.js'), 'install-git-hooks'], { env, encoding: 'utf8' });
@@ -179,6 +181,22 @@ async function gitHooksTest() {
   assert(await waitFor(() => fs.readFileSync(hubMem, 'utf8').includes('newer')), 'second push uploads the update');
   B.sh(['pull', '-q', '--no-rebase'], B.repo);
   assert.match(fs.readFileSync(B.mem(), 'utf8'), /newer fact/, 'git pull downloads memory');
+
+  // GitHub backend: git sets GIT_DIR etc. for hooks; the memory commit must land in the memory repo,
+  // never in the repo being pushed (this once leaked memory into a public repo).
+  const memRepo = path.join(g, 'memory.git');
+  execFileSync('git', ['init', '-q', '--bare', memRepo]);
+  const C = box('C', memRepo);
+  C.sh(['clone', '-q', origin, C.repo]);
+  put(C.mem(), '- fact from C\n');
+  fs.writeFileSync(path.join(C.repo, 'f.txt'), '3');
+  C.sh(['commit', '-qam', 'three'], C.repo); C.sh(['push', '-q'], C.repo);
+  const memFiles = () => { try { return execFileSync('git', ['--git-dir', memRepo, 'log', '--all', '--name-only', '--format='], { encoding: 'utf8' }); } catch { return ''; } };
+  assert(await waitFor(() => memFiles().includes('MEMORY.md')), 'memory pushed to the memory repo');
+  const authors = execFileSync('git', ['--git-dir', origin, 'log', '--all', '--format=%an'], { encoding: 'utf8' });
+  assert(!authors.includes('mem-mastero'), 'no mem-mastero commit in the project repo');
+  assert(!execFileSync('git', ['--git-dir', origin, 'log', '--all', '--name-only', '--format='], { encoding: 'utf8' }).includes('MEMORY.md'), 'no memory files in the project repo');
+  execFileSync(process.execPath, [path.join(__dirname, 'sync.js'), 'uninstall-git-hooks'], { env: C.env });
 
   execFileSync(process.execPath, [path.join(__dirname, 'sync.js'), 'uninstall-git-hooks'], { env: A.env });
   assert.throws(() => execFileSync('git', ['config', '--global', '--get', 'core.hooksPath'], { env: A.env, stdio: 'ignore' }), 'uninstall unsets hooksPath');
