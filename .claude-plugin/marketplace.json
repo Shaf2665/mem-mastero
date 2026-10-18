@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "mem-mastero",
+  "description": "Cross-device Claude Code memory and sessions via Google Drive.",
+  "owner": {
+    "name": "Mohammed Shafiq",
+    "url": "https://github.com/Shaf2665"
+  },
+  "plugins": [
+    {
+      "name": "mem-mastero",
+      "description": "Sync sessions and memory for each repo through Google Drive.",
+      "source": "./",
+      "category": "productivity"
+    }
+  ]
+}
