@@ -180,6 +180,23 @@ pi/projects/<host>/<owner>/<repo>/         Pi      (<timestamp>_<id>.jsonl)
 
 Manual sync from inside a repo: `node <plugin-dir>/sync.js <claude|codex|copilot|pi> start`
 
+### Big sessions (over 100 MB)
+
+GitHub rejects any file over 100 MB, and long agent sessions can grow past that. In the synced folder, mem-mastero stores every file over **45 MB** as numbered parts next to a manifest:
+
+```
+<session>.jsonl.parts/
+  manifest.json        original name, size, SHA-256, and the parts in order
+  part-001.jsonl
+  part-002.jsonl
+  part-003.jsonl
+```
+
+- **Your agent always sees the whole session.** When a machine pulls, the parts are joined back into the original file, byte for byte, in the place the agent expects. `/resume` works as usual, with the full context.
+- **The original is checked before use.** The rebuilt file must match the manifest's SHA-256. If a part is missing or hasn't finished syncing, the session is skipped and retried next time, so you never get a corrupt session.
+- **Each part is readable on its own.** Parts are cut at line boundaries, so every part is valid JSONL, in order. You (or an agent) can open part-001 in the repo and read the start of the conversation.
+- It works the same on Google Drive. You can change the part size with the `MEM_MASTERO_PART_BYTES` environment variable (in bytes).
+
 ## Resuming a session from another machine
 
 | Agent | How |
@@ -194,7 +211,7 @@ Manual sync from inside a repo: `node <plugin-dir>/sync.js <claude|codex|copilot
 - **Repos only.** A folder without a git `origin` remote isn't synced, because the remote URL is how machines agree on which project is which.
 - **Privacy:** transcripts can contain anything you pasted or that tools printed, including secrets. They're stored in *your* Drive or repo. **Keep the GitHub repo private.**
 - **Deletes don't propagate.** A session or memory removed on one machine comes back from another. Delete it from Drive or the repo too.
-- **GitHub repo size:** every turn commits the changed transcript, so the repo grows over time. GitHub rejects single files over 100 MB.
+- **GitHub repo size:** every turn commits the changed transcript, so the repo grows over time. Single files over 100 MB are handled by [splitting them into parts](#big-sessions-over-100-mb). GitHub recommends keeping repos under a few GB, so start a fresh memory repo now and then if yours gets huge.
 - **First GitHub sync on an extra machine:** if that machine already had its own Claude `MEMORY.md` for a project, the one from the repo replaces it.
 - Transcripts keep the original machine's absolute paths. Resume works, but old tool output shows the other machine's paths.
 - Don't run the *same* session on two machines at the same time. The last writer wins.

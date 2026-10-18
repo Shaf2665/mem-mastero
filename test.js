@@ -92,6 +92,31 @@ assert.match(MA.run('pi', 'start'), /pushed 1 file/);
   await handlers.session_start({}, ctx);
   assert.match(notes[0], /pi github\.com\/me\/demo .*pulled 1/);
   assert(fs.existsSync(path.join(piDir(MB), '2026-10-18_s1.jsonl')), 'Pi session pulled into this machine\'s cwd folder');
+
+  // Big sessions: stored as line-aligned parts in the synced folder, rebuilt byte-for-byte on pull.
+  for (const m of [MA, MB]) m.env.MEM_MASTERO_PART_BYTES = '100';
+  const claudeDir = m => path.join(m.h, '.claude', 'projects', m.repo.replace(/[^a-zA-Z0-9]/g, '-'));
+  const big = Array.from({ length: 20 }, (_, i) => JSON.stringify({ turn: i, text: 'hello world' })).join('\n') + '\n';
+  put(path.join(claudeDir(MA), 'big.jsonl'), big);
+  MA.run('claude', 'start');
+  const pd = path.join(hub, 'projects', 'github.com', 'me', 'demo', 'big.jsonl.parts');
+  const man = JSON.parse(fs.readFileSync(path.join(pd, 'manifest.json'), 'utf8'));
+  assert(man.parts.length > 1 && !fs.existsSync(pd.slice(0, -6)), 'stored as parts only');
+  for (const p of man.parts) {
+    const s = fs.readFileSync(path.join(pd, p), 'utf8');
+    assert(s.length <= 100 && s.endsWith('\n'), 'parts are line-aligned and under the limit');
+    s.trim().split('\n').forEach(l => JSON.parse(l)); // each part is valid JSONL on its own
+  }
+  assert.match(MB.run('claude', 'start'), /pulled 1/);
+  assert.strictEqual(fs.readFileSync(path.join(claudeDir(MB), 'big.jsonl'), 'utf8'), big);
+  assert.match(MA.run('claude', 'start'), /pulled 0, pushed 0/);
+  assert.match(MB.run('claude', 'start'), /pulled 0, pushed 0/);
+
+  // Half-synced parts (one missing) are never rebuilt into a corrupt session.
+  fs.rmSync(path.join(claudeDir(MB), 'big.jsonl'));
+  fs.rmSync(path.join(pd, man.parts[1]));
+  MB.run('claude', 'pull');
+  assert(!fs.existsSync(path.join(claudeDir(MB), 'big.jsonl')), 'incomplete parts are skipped');
   fs.rmSync(t, { recursive: true });
   console.log('ok');
 })();

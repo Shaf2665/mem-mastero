@@ -8,32 +8,89 @@ const { execFileSync, spawn } = require('child_process');
 
 const SLACK_MS = 2000; // Drive rounds mtimes; anything within 2s counts as "same"
 
+// --- Big files: GitHub rejects files over 100 MB, so in the synced folder a big session X is stored as
+// X.parts/manifest.json + X.parts/part-001.jsonl, ... Parts are cut at line ends, so each one is valid JSONL
+// that agents and humans can read on its own. Agents never see parts: pulling rebuilds the original X.
+const PART_BYTES = Number(process.env.MEM_MASTERO_PART_BYTES) || 45 * 1024 * 1024; // under GitHub's 50 MB warning
+const partsDir = p => p + '.parts';
+const manifestOf = p => path.join(partsDir(p), 'manifest.json');
+const sha256 = buf => require('crypto').createHash('sha256').update(buf).digest('hex');
+
+function manifestTime(p) {
+  try { return fs.statSync(manifestOf(p)).mtimeMs; } catch { return -Infinity; }
+}
+function mtimeOf(p) {
+  try { return fs.statSync(p).mtimeMs; } catch { return manifestTime(p); }
+}
+
+// ponytail: whole file in memory; stream it if sessions reach GBs.
+function writeParts(d, buf) {
+  fs.rmSync(d, { force: true });
+  fs.rmSync(partsDir(d), { recursive: true, force: true });
+  fs.mkdirSync(partsDir(d), { recursive: true });
+  const parts = [];
+  for (let start = 0; start < buf.length;) {
+    let end = Math.min(start + PART_BYTES, buf.length);
+    if (end < buf.length) { const nl = buf.lastIndexOf(0x0a, end - 1); if (nl >= start) end = nl + 1; } // a single line longer than a part gets cut mid-line
+    const name = `part-${String(parts.length + 1).padStart(3, '0')}${path.extname(d)}`;
+    fs.writeFileSync(path.join(partsDir(d), name), buf.subarray(start, end));
+    parts.push(name);
+    start = end;
+  }
+  fs.writeFileSync(manifestOf(d), JSON.stringify({
+    note: 'Split by mem-mastero to stay under GitHub\'s 100 MB file limit. Concatenate the parts in order to rebuild the original file.',
+    file: path.basename(d), bytes: buf.length, sha256: sha256(buf), parts,
+  }, null, 2) + '\n');
+}
+
+// The original bytes of p, rebuilt from parts if needed. null if parts are missing or don't match (half-synced).
+function readWhole(p) {
+  if (fs.existsSync(p)) return fs.readFileSync(p);
+  try {
+    const m = JSON.parse(fs.readFileSync(manifestOf(p), 'utf8'));
+    const buf = Buffer.concat(m.parts.map(f => fs.readFileSync(path.join(partsDir(p), path.basename(f)))));
+    return sha256(buf) === m.sha256 ? buf : null;
+  } catch { return null; }
+}
+
 // Copy s -> d if d is missing or older. Keeps s's mtime on d so the next run sees "same", not "newer".
-function syncFile(s, d) {
-  let sm, dm = -Infinity;
-  try { sm = fs.statSync(s).mtimeMs; } catch { return false; }
-  try { dm = fs.statSync(d).mtimeMs; } catch {}
+// toRemote: d is in the synced folder, so files over PART_BYTES are stored as parts.
+function syncFile(s, d, toRemote = true) {
+  const sm = mtimeOf(s);
+  if (sm === -Infinity) return false;
+  const split = toRemote && fs.existsSync(s) && fs.statSync(s).size > PART_BYTES;
+  // Split: compare against the parts only, so an old whole copy of d (e.g. git-ignored) still gets converted.
+  const dm = split ? manifestTime(d) : mtimeOf(d);
   if (sm <= dm + SLACK_MS) return false;
   fs.mkdirSync(path.dirname(d), { recursive: true });
-  fs.copyFileSync(s, d);
-  fs.utimesSync(d, new Date(), new Date(sm));
+  if (split) {
+    writeParts(d, fs.readFileSync(s));
+    fs.utimesSync(manifestOf(d), new Date(), new Date(sm));
+  } else {
+    if (fs.existsSync(s)) fs.copyFileSync(s, d);
+    else { const buf = readWhole(s); if (!buf) return false; fs.writeFileSync(d, buf); }
+    if (fs.existsSync(partsDir(d))) fs.rmSync(partsDir(d), { recursive: true, force: true });
+    fs.utimesSync(d, new Date(), new Date(sm));
+  }
   return true;
 }
 
-// Relative paths of every file under dir.
+// Relative paths of every file under dir; a split file's X.parts/ folder counts as the one file X.
 function walk(dir, rel = '', out = []) {
   let entries;
   try { entries = fs.readdirSync(path.join(dir, rel), { withFileTypes: true }); } catch { return out; }
   for (const e of entries) {
     const r = path.join(rel, e.name);
-    if (e.isDirectory()) walk(dir, r, out); else if (e.isFile()) out.push(r);
+    if (e.isDirectory() && e.name.endsWith('.parts') && fs.existsSync(path.join(dir, r, 'manifest.json'))) {
+      if (!fs.existsSync(path.join(dir, r.slice(0, -6)))) out.push(r.slice(0, -6));
+    } else if (e.isDirectory()) walk(dir, r, out); else if (e.isFile()) out.push(r);
   }
   return out;
 }
 
 // Copy every file in src that is missing or newer in dst. Returns relative paths copied.
 // ponytail: never deletes, so a memory pruned on one machine comes back from another. Add tombstones if that bites.
-const syncDir = (src, dst) => walk(src).filter(r => syncFile(path.join(src, r), path.join(dst, r)));
+const syncDir = (src, dst, toRemote = true) => walk(src).filter(r => syncFile(path.join(src, r), path.join(dst, r), toRemote));
 
 // git@github.com:o/r.git and https://github.com/o/r -> github.com/o/r
 function normalizeRemote(url) {
@@ -201,7 +258,7 @@ function main(name, mode) {
       if (pushed.length) spawn(process.execPath, [__filename, name, 'gitpush'], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
     } else pullPush(root); // git rewrites mtimes of files it updates, so they count as newer than local
   }
-  const pulled = mode === 'push' ? [] : syncDir(c.remote, c.local);
+  const pulled = mode === 'push' ? [] : syncDir(c.remote, c.local, false);
   say(`${name} ${id} (${cfg.github ? 'GitHub' : 'Drive'}): pulled ${pulled.length}, pushed ${pushed.length} file(s).`);
 
   // Claude may have loaded MEMORY.md before this hook ran, so hand the fresh copy to the session directly.
