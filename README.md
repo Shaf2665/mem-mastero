@@ -2,6 +2,10 @@
 
 **Your coding agent's sessions and memory follow each repo across every machine.**
 
+[![mem-mastero in 22 seconds: git push on one laptop, git pull on another, and the agent remembers](assets/demo.jpg)](assets/demo.mp4)
+
+<sub>▶ Click to watch the 22-second demo.</sub>
+
 Coding agents keep chat history and memory **on the machine where you worked**. Clone the same repo on another computer and you start from zero. mem-mastero syncs that history through storage **you own**:
 
 - **Google Drive** (via Google Drive for Desktop), or
