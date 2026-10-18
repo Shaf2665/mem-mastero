@@ -1,3 +1,7 @@
+
+
+https://github.com/user-attachments/assets/35518702-83cb-4cb6-9a97-68fed34d2910
+
 # mem-mastero
 
 **Your coding agent's sessions and memory follow each repo across every machine.**
