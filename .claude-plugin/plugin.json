@@ -1,7 +1,7 @@
 {
   "name": "mem-mastero",
-  "version": "0.2.0",
-  "description": "Sync Claude Code sessions and memory for each repo across machines via your Google Drive or a private GitHub repo.",
+  "version": "0.3.0",
+  "description": "Sync coding-agent sessions and memory for each repo across machines via your Google Drive or a private GitHub repo.",
   "author": {
     "name": "Mohammed Shafiq",
     "url": "https://github.com/Shaf2665"
@@ -15,6 +15,8 @@
     "sessions",
     "sync",
     "google-drive",
-    "github"
+    "github",
+    "codex",
+    "copilot"
   ]
 }

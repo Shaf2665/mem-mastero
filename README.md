@@ -1,21 +1,34 @@
 # mem-mastero
 
-**Your Claude Code sessions and memory follow each repo across every machine.**
+**Your coding agent's sessions and memory follow each repo across every machine.**
 
-Claude Code keeps each project's chat history (`*.jsonl` session transcripts) and auto-memory (`memory/`) in `~/.claude/projects/<path-of-folder>/`. That folder exists only on the machine where you worked. If you clone the same repo on another computer, you start from zero.
-
-mem-mastero syncs that folder through storage **you own**:
+Coding agents keep chat history and memory **on the machine where you worked**. Clone the same repo on another computer and you start from zero. mem-mastero syncs that history through storage **you own**:
 
 - **Google Drive** (via Google Drive for Desktop), or
 - **a private GitHub repo**
 
-Projects are matched by their **git `origin` URL**, not their folder path. A clone at `D:\Work\app` on your Windows PC and `~/code/app` on your Mac share the same sessions and memory.
+Projects are matched by their **git `origin` URL**, not their folder path. A clone at `D:\Work\app` on your Windows PC and `~/code/app` on your Mac share the same sessions.
+
+## Supported agents
+
+| Agent | Status | What gets synced |
+|---|---|---|
+| **Claude Code** (CLI, desktop, IDE) | ✅ Supported | Session transcripts + auto-memory (`~/.claude/projects/<project>/`) |
+| **OpenAI Codex** (CLI, desktop app) | ✅ Supported | Session rollouts for this repo (`~/.codex/sessions/**/rollout-*.jsonl`) |
+| **GitHub Copilot CLI** | 🧪 Beta | Session folders for this repo (`~/.copilot/session-state/<id>/`) |
+| Copilot Chat in VS Code / JetBrains | ⏳ Not yet | Chats are stored in IDE workspace storage, which isn't keyed by repo |
+| OpenCode | ⏳ Not yet | Sessions live in a SQLite database, so they can't be copied file by file |
+| Gemini CLI / Antigravity | ⏳ Not yet | Different session layout; adapter not written yet |
+| Cursor, Windsurf, Cline, Aider, others | ⏳ Not yet | No adapter yet. PRs welcome (see [Adding an agent](#adding-an-agent)) |
+
+> **Beta** means the adapter follows the agent's official docs and passes the test suite, but hasn't been run against a live install yet. Please open an issue if something's off.
+
+Project *instructions* such as `CLAUDE.md`, `AGENTS.md` and `.github/copilot-instructions.md` already live in your repo, so git syncs them. mem-mastero covers what git doesn't: the history and memory kept in your home folder.
 
 ---
 
 ## Requirements
 
-- [Claude Code](https://claude.com/claude-code)
 - [Node.js](https://nodejs.org) 18+ on your `PATH`
 - [git](https://git-scm.com)
 - **One** of these:
@@ -24,7 +37,12 @@ Projects are matched by their **git `origin` URL**, not their folder path. A clo
 
 ## Installation
 
-### 1. Install the plugin
+### Step 1: Install the plugin in your agent(s)
+
+Install it in every agent you use. They all share the same sync setup.
+
+<details open>
+<summary><b>Claude Code</b></summary>
 
 Inside Claude Code:
 
@@ -43,9 +61,45 @@ claude plugin marketplace add Shaf2665/mem-mastero
 claude plugin install mem-mastero@mem-mastero
 ```
 
-Restart Claude Code afterwards.
+Restart Claude Code.
+</details>
 
-### 2. Choose where to sync
+<details open>
+<summary><b>OpenAI Codex</b> (CLI, desktop app)</summary>
+
+```bash
+codex plugin marketplace add Shaf2665/mem-mastero
+```
+
+```bash
+codex plugin add mem-mastero@mem-mastero
+```
+
+Then run `codex`, open **`/hooks`**, review and **trust** mem-mastero's hooks, and start a new thread. The Codex desktop app uses the same install; restart it afterwards.
+</details>
+
+<details open>
+<summary><b>GitHub Copilot CLI</b> (beta)</summary>
+
+```bash
+copilot plugin marketplace add Shaf2665/mem-mastero
+```
+
+```bash
+copilot plugin install mem-mastero@mem-mastero
+```
+
+Or inside an interactive Copilot CLI session:
+
+```
+/plugin marketplace add Shaf2665/mem-mastero
+/plugin install mem-mastero@mem-mastero
+```
+
+Copilot CLI can also sync sessions to your GitHub account by itself (`/chronicle`). mem-mastero additionally restores the session files on your other machines, so `copilot --resume` finds them there.
+</details>
+
+### Step 2: Choose where to sync
 
 #### Option A: Google Drive (default, no config needed)
 
@@ -53,8 +107,6 @@ Restart Claude Code afterwards.
 2. That's it. mem-mastero finds your Drive folder automatically:
    - Windows: `G:\My Drive` (any drive letter)
    - macOS: `~/Library/CloudStorage/GoogleDrive-*/My Drive`
-
-   Data goes to `My Drive/mem-mastero/projects/<host>/<owner>/<repo>/`.
 
 To use a different folder (for example an `rclone mount` on Linux, or Dropbox or OneDrive), create `~/.mem-mastero.json`:
 
@@ -64,7 +116,7 @@ To use a different folder (for example an `rclone mount` on Linux, or Dropbox or
 
 #### Option B: Private GitHub repo
 
-1. Create a **private** repo to hold your memory. Using the GitHub CLI:
+1. Create a **private** repo to hold your memory:
 
    ```bash
    gh repo create claude-memory --private
@@ -83,48 +135,75 @@ To use a different folder (for example an `rclone mount` on Linux, or Dropbox or
 
 On first use the repo is cloned to `~/.mem-mastero/repo`.
 
-### 3. Do the same on your other machines
+### Step 3: Repeat on your other machines
 
-Install the plugin and set up the same backend. Open any repo in Claude Code and your history arrives.
+Install the plugin in the same agents and set up the same backend. Open the repo and your history arrives.
 
 ---
 
 ## How it works
 
-| When | Google Drive | GitHub |
+Each agent runs mem-mastero from its own lifecycle hooks:
+
+| Agent | Session start | During / end of session |
 |---|---|---|
-| Session starts | Pull newer files, push local ones | Commit local changes, `pull --rebase`, push, copy pulled files in |
-| After each reply / session ends | Copy changed files to Drive | Commit changed files, push in the background |
+| Claude Code | pull + push | push after every reply, and at session end |
+| Codex | pull + push | push the current session after every turn, and at session end |
+| Copilot CLI | pull + push | push the session at session end |
+
+The synced folder (Drive or the GitHub repo) looks like this:
+
+```
+projects/<host>/<owner>/<repo>/            Claude Code
+codex/projects/<host>/<owner>/<repo>/      Codex   (YYYY/MM/DD/rollout-*.jsonl)
+copilot/projects/<host>/<owner>/<repo>/    Copilot (<session-id>/...)
+```
 
 - For each file, the newer copy wins. If two machines edit the same file between syncs, the one that syncs last wins.
-- If `MEMORY.md` was updated from another device at startup, the fresh copy is injected straight into the session.
-- A failing sync never blocks Claude Code. You get one line of explanation and the session carries on.
+- With GitHub, every sync is a commit, and pushes during a session happen in the background.
+- If Claude's `MEMORY.md` was updated from another device, the fresh copy is injected into the session at startup.
+- A failing sync never blocks your agent. You get one line of explanation and the session carries on.
 - There are no dependencies: one Node script and git.
 
-Manual sync from inside a repo: `node <plugin-dir>/sync.js start` (or `push` / `pull`).
+Manual sync from inside a repo: `node <plugin-dir>/sync.js <claude|codex|copilot> start`
 
 ## Resuming a session from another machine
 
-Sessions pulled at startup show up in `/resume` inside that session, and in `claude --resume` on the next launch.
+| Agent | How |
+|---|---|
+| Claude Code | `/resume`, or `claude --resume` |
+| Codex | `codex resume --all`. The default picker only lists sessions whose folder matches the current one exactly, so use `--all` or `codex resume <session-id>` |
+| Copilot CLI | `copilot --resume` |
 
 ## Good to know
 
 - **Repos only.** A folder without a git `origin` remote isn't synced, because the remote URL is how machines agree on which project is which.
 - **Privacy:** transcripts can contain anything you pasted or that tools printed, including secrets. They're stored in *your* Drive or repo. **Keep the GitHub repo private.**
-- **Deletes don't propagate.** A memory removed on one machine comes back from another. Delete it from Drive or the repo too.
+- **Deletes don't propagate.** A session or memory removed on one machine comes back from another. Delete it from Drive or the repo too.
 - **GitHub repo size:** every turn commits the changed transcript, so the repo grows over time. GitHub rejects single files over 100 MB.
-- **First GitHub sync on an extra machine:** if that machine already had its own `MEMORY.md` for a project, the one from the repo replaces it.
-- Transcripts keep the original machine's absolute paths (`cwd`). Resume works, but old tool output shows the other machine's paths.
+- **First GitHub sync on an extra machine:** if that machine already had its own Claude `MEMORY.md` for a project, the one from the repo replaces it.
+- Transcripts keep the original machine's absolute paths. Resume works, but old tool output shows the other machine's paths.
 - Don't run the *same* session on two machines at the same time. The last writer wins.
-- Only Claude Code is supported for now.
 
 ## Uninstall
 
-```bash
-claude plugin uninstall mem-mastero@mem-mastero
-```
+| Agent | Command |
+|---|---|
+| Claude Code | `claude plugin uninstall mem-mastero@mem-mastero` |
+| Codex | `codex plugin remove mem-mastero` |
+| Copilot CLI | `copilot plugin uninstall mem-mastero` |
 
 Your synced data stays in Drive or the repo. Delete `~/.mem-mastero.json` and `~/.mem-mastero/` to remove the local config and clone.
+
+## Adding an agent
+
+An agent can be supported when it (1) has lifecycle hooks or a plugin system that can run a command, and (2) stores sessions as files. Each adapter in [`sync.js`](sync.js) is a few lines:
+
+- `local`: where the agent keeps sessions
+- `remote`: its prefix in the synced folder
+- `push`: which of those files belong to the current repo
+
+Add the agent's manifest and hooks file, add a case to [`test.js`](test.js), and open a PR.
 
 ## Development
 

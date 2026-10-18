@@ -1,0 +1,33 @@
+{
+  "name": "mem-mastero",
+  "version": "0.3.0",
+  "description": "Sync coding-agent sessions and memory for each repo across machines via your Google Drive or a private GitHub repo.",
+  "author": {
+    "name": "Mohammed Shafiq",
+    "url": "https://github.com/Shaf2665"
+  },
+  "homepage": "https://github.com/Shaf2665/mem-mastero",
+  "repository": "https://github.com/Shaf2665/mem-mastero",
+  "license": "MIT",
+  "keywords": [
+    "memory",
+    "sessions",
+    "sync",
+    "google-drive",
+    "github",
+    "codex",
+    "copilot"
+  ],
+  "hooks": "./hooks/codex-hooks.json",
+  "interface": {
+    "displayName": "mem-mastero",
+    "shortDescription": "Sync sessions across machines",
+    "longDescription": "Sync coding-agent sessions and memory for each repo across machines via your Google Drive or a private GitHub repo.",
+    "developerName": "Mohammed Shafiq",
+    "category": "Productivity",
+    "capabilities": [
+      "Lifecycle hooks"
+    ],
+    "websiteURL": "https://github.com/Shaf2665/mem-mastero"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "name": "mem-mastero",
+  "interface": {
+    "displayName": "mem-mastero"
+  },
+  "plugins": [
+    {
+      "name": "mem-mastero",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/Shaf2665/mem-mastero.git",
+        "ref": "main"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

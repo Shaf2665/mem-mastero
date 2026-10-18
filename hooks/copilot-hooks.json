@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "type": "command",
+        "bash": "node \"${PLUGIN_ROOT}/sync.js\" copilot start",
+        "powershell": "node \"${PLUGIN_ROOT}\\sync.js\" copilot start",
+        "timeoutSec": 60
+      }
+    ],
+    "sessionEnd": [
+      {
+        "type": "command",
+        "bash": "node \"${PLUGIN_ROOT}/sync.js\" copilot push",
+        "powershell": "node \"${PLUGIN_ROOT}\\sync.js\" copilot push",
+        "timeoutSec": 60
+      }
+    ]
+  }
+}
