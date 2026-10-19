@@ -439,7 +439,11 @@ function gitHook(name, args) {
 //   mem-mastero setup --drive                 Google Drive instead of GitHub
 // Reconnecting a store reuses the project rules saved in it (mem-mastero.json), so a new laptop asks nothing else.
 const PLUGIN = 'Shaf2665/mem-mastero';
-const sh = (cmd, args, opts = {}) => spawnSync(cmd, args, { encoding: 'utf8', shell: process.platform === 'win32', windowsHide: true, ...opts });
+// Windows needs a shell to run npm-installed CLIs (claude.cmd, codex.cmd ...); pass one quoted command line, not an args array.
+const quote = a => /^[\w@./:=-]+$/.test(a) ? a : `"${a.replace(/"/g, '\\"')}"`;
+const sh = (cmd, args, opts = {}) => process.platform === 'win32'
+  ? spawnSync([cmd, ...args].map(quote).join(' '), { encoding: 'utf8', shell: true, windowsHide: true, ...opts })
+  : spawnSync(cmd, args, { encoding: 'utf8', windowsHide: true, ...opts });
 
 function ghAccounts() {
   const r = sh('gh', ['auth', 'status']);
@@ -537,7 +541,7 @@ async function setup(argv) {
     if (typeof rules === 'string') rules = rules.split(/[,\s]+/).filter(Boolean);
     if (!rules || !rules.length) rules = null;
     if (rules) store.for = rules;
-    if (JSON.stringify(saved ?? null) !== JSON.stringify(rules)) { // save, so other machines reconnect with no questions
+    if (saved === undefined || JSON.stringify(saved) !== JSON.stringify(rules)) { // save, so other machines reconnect with no questions
       fs.writeFileSync(rulesFile, JSON.stringify({ for: rules, note: 'Projects stored here (git remote patterns). null = all projects not claimed by another store.' }, null, 2) + '\n');
       if (store.github) withLock(root, () => { commit(root); pullPush(root); });
     }
