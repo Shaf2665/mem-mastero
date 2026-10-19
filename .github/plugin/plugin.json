@@ -1,6 +1,6 @@
 {
   "name": "mem-mastero",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "description": "Sync coding-agent sessions and memory for each repo across machines via your Google Drive or a private GitHub repo.",
   "author": {
     "name": "Mohammed Shafiq",
@@ -19,5 +19,6 @@
     "copilot",
     "pi"
   ],
-  "hooks": "hooks/copilot-hooks.json"
+  "hooks": "hooks/copilot-hooks.json",
+  "commands": "./commands/"
 }

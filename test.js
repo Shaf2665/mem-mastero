@@ -3,7 +3,18 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { syncDir, normalizeRemote } = require('./sync');
+const { syncDir, normalizeRemote, matches, pickStore } = require('./sync');
+
+// Store routing: first matching rule-based store, else the catch-all, else not synced.
+assert(matches('dev.azure.com/acme/*', 'dev.azure.com/acme/web/_git/app'));
+assert(matches('github.com/acme', 'github.com/acme/api') && !matches('github.com/acme', 'github.com/acmecorp/api'));
+{
+  const work = { github: 'w', for: ['dev.azure.com/acme/*', 'github.com/acme'] }, me = { github: 'p' };
+  assert.strictEqual(pickStore({ stores: [work, me] }, 'github.com/acme/api'), work);
+  assert.strictEqual(pickStore({ stores: [work, me] }, 'github.com/me/hobby'), me);
+  assert.strictEqual(pickStore({ stores: [work] }, 'github.com/me/hobby'), null, 'work-only laptop skips personal projects');
+  assert.deepStrictEqual(pickStore({ github: 'legacy' }, 'x/y/z'), { github: 'legacy' }, 'v0.7 config still works');
+}
 
 for (const u of ['git@github.com:o/R.git', 'https://github.com/o/r', 'https://user@github.com/o/r.git/', 'ssh://git@github.com:22/o/r.git']) {
   assert.strictEqual(normalizeRemote(u), 'github.com/o/r', u);
@@ -134,6 +145,7 @@ assert.match(MA.run('pi', 'start'), /pushed 1 file/);
   fs.rmSync(t, { recursive: true });
 
   await gitHooksTest();
+  setupTest();
   console.log('ok');
 })();
 
@@ -203,3 +215,61 @@ async function gitHooksTest() {
   fs.rmSync(g, { recursive: true, force: true });
 }
 
+
+// setup: two memory repos (work + personal) on machine A; machine B reconnects to the work one with no other input.
+function setupTest() {
+  const g = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'mem-mastero-setup-')));
+  const bare = n => { const p = path.join(g, n + '.git'); execFileSync('git', ['init', '-q', '--bare', '-b', 'main', p]); return p; };
+  const W = bare('work-memory'), P = bare('personal-memory');
+  const machine = name => {
+    const h = path.join(g, name); fs.mkdirSync(h);
+    const env = { ...process.env, USERPROFILE: h, HOME: h, GIT_CONFIG_GLOBAL: path.join(h, '.gitconfig'), CLAUDE_CONFIG_DIR: path.join(h, '.claude'),
+      CODEX_HOME: path.join(h, '.codex'), COPILOT_HOME: path.join(h, '.copilot'), PI_CODING_AGENT_DIR: path.join(h, '.pi', 'agent') };
+    for (const k of ['MEM_MASTERO_DIR', 'MEM_MASTERO_INHIBIT', 'MEM_MASTERO_PART_BYTES']) delete env[k];
+    for (const [k, v] of [['user.name', 't'], ['user.email', 't@t'], ['init.defaultBranch', 'main'], ['core.autocrlf', 'true']]) execFileSync('git', ['config', '--global', k, v], { env });
+    const setup = (...args) => execFileSync(process.execPath, [path.join(__dirname, 'sync.js'), 'setup', '--yes', '--no-agents', '--no-hooks', ...args], { env, encoding: 'utf8' });
+    const project = (dir, origin) => {
+      const r = path.join(h, dir); execFileSync('git', ['init', '-q', r], { env }); execFileSync('git', ['-C', r, 'remote', 'add', 'origin', origin], { env });
+      const mem = path.join(h, '.claude', 'projects', r.replace(/[^a-zA-Z0-9]/g, '-'), 'memory', 'MEMORY.md');
+      return { r, mem, sync: () => execFileSync(process.execPath, [path.join(__dirname, 'sync.js'), 'claude', 'start'], { env, input: JSON.stringify({ cwd: r }), encoding: 'utf8' }) };
+    };
+    return { h, env, setup, project };
+  };
+  const files = repo => { try { return execFileSync('git', ['--git-dir', repo, 'log', '--all', '--name-only', '--format='], { encoding: 'utf8' }); } catch { return ''; } };
+
+  const A = machine('A');
+  assert.match(A.setup('--repo', W, '--for', 'dev.azure.com/acme/*'), /dev\.azure\.com\/acme\/\*/);
+  const out = A.setup('--repo', P);
+  assert.match(out, /all other projects/);
+  const cfgA = JSON.parse(fs.readFileSync(path.join(A.h, '.mem-mastero.json'), 'utf8'));
+  assert.deepStrictEqual(cfgA.stores.map(s => !!s.for), [true, false], 'rule-based store first, catch-all last');
+
+  const work = A.project('work-app', 'https://acme@dev.azure.com/acme/shop/_git/app'), hobby = A.project('hobby', 'git@github.com:me/hobby.git');
+  put(work.mem, '- work fact\n'); put(hobby.mem, '- hobby fact\n');
+  work.sync(); hobby.sync();
+  assert(files(W).includes('dev.azure.com/acme/shop/_git/app') && !files(W).includes('hobby'), 'work memory only in the work repo');
+  assert(files(P).includes('github.com/me/hobby') && !files(P).includes('acme'), 'personal memory only in the personal repo');
+
+  // Machine B (a work laptop): just the repo; the project rules come from the repo itself.
+  const B = machine('B');
+  assert.match(B.setup('--repo', W), /dev\.azure\.com\/acme\/\*/, 'rules restored from the store');
+  const bWork = B.project('code/app', 'git@ssh.dev.azure.com:v3/acme/shop/app'), bHobby = B.project('hobby', 'https://github.com/me/hobby');
+  assert.match(bWork.sync(), /pulled 1/);
+  assert.strictEqual(fs.readFileSync(bWork.mem, 'utf8'), '- work fact\n');
+  assert.match(bHobby.sync(), /isn't synced/, 'personal projects stay off the work laptop');
+
+  // Upgrade: a v0.7 clone checked out with autocrlf=true becomes byte-exact, keeping file mtimes (newest-wins depends on them).
+  const C = machine('C');
+  const legacy = path.join(C.h, '.mem-mastero', 'repo'), f = path.join(legacy, 'projects', 'x', 's.jsonl');
+  execFileSync('git', ['clone', '-q', '-c', 'core.autocrlf=true', P, legacy], { env: C.env, stdio: 'ignore' });
+  const LF = '{"a":1}\n{"b":2}\n';
+  put(f, LF);
+  execFileSync('git', ['-C', legacy, 'add', '-A'], { env: C.env, stdio: 'ignore' }); execFileSync('git', ['-C', legacy, 'commit', '-qm', 'x'], { env: C.env, stdio: 'ignore' });
+  fs.rmSync(f); execFileSync('git', ['-C', legacy, 'checkout', '-q', '--', '.'], { env: C.env }); // checkout converts to CRLF
+  assert(fs.readFileSync(f, 'utf8').includes('\r\n'), 'precondition: CRLF checkout');
+  const old = new Date('2026-01-02T03:04:05Z'); fs.utimesSync(f, old, old);
+  C.setup('--repo', P);
+  assert.strictEqual(fs.readFileSync(f, 'utf8'), LF, 'byte-exact after upgrade');
+  assert.strictEqual(fs.statSync(f).mtimeMs, old.getTime(), 'mtime kept');
+  fs.rmSync(g, { recursive: true, force: true });
+}

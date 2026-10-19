@@ -32,127 +32,92 @@ Project *instructions* such as `CLAUDE.md`, `AGENTS.md` and `.github/copilot-ins
 
 ---
 
-## Requirements
+## Installation: one command
 
-- [Node.js](https://nodejs.org) 18+ on your `PATH`
-- [git](https://git-scm.com)
-- **One** of these:
-  - [Google Drive for Desktop](https://www.google.com/drive/download/), signed in
-  - a GitHub account
-
-## Installation
-
-### Step 1: Install the plugin in your agent(s)
-
-Install it in every agent you use. They all share the same sync setup.
-
-<details open>
-<summary><b>Claude Code</b></summary>
-
-Inside Claude Code:
-
-```
-/plugin marketplace add Shaf2665/mem-mastero
-/plugin install mem-mastero@mem-mastero
-```
-
-Or from a terminal:
+On **every** machine, your first one or your tenth:
 
 ```bash
-claude plugin marketplace add Shaf2665/mem-mastero
+npx github:Shaf2665/mem-mastero setup
 ```
+
+It asks at most two or three questions, each with a default you can accept by pressing Enter:
+
+```
+GitHub accounts signed in on this machine:
+  1) Shaf2665
+  2) mshafiq-acme
+Which account holds this memory? [1]:
+Memory repo [Shaf2665/claude-memory]:
+✓ Found Shaf2665/claude-memory          (or: ✓ Created private repo ...)
+✓ Connected to github.com/shaf2665/claude-memory
+Plugin in your coding agents:
+  ✓ claude
+  ✓ codex — open /hooks in codex once and trust mem-mastero
+  ✓ copilot
+Also sync on git push / pull / clone? (Y/n) [Y]:
+mem-mastero: git hooks installed
+
+mem-mastero stores:
+  • github.com/shaf2665/claude-memory  ←  all projects
+Git push/pull sync: on
+```
+
+That one command:
+1. **Connects your memory repo.** It finds the repo on your account, or creates it as **private**. If you have no GitHub CLI, it asks for a repo URL instead, or press Enter to use Google Drive.
+2. **Installs the plugin** into every coding agent it finds: Claude Code, Codex, Copilot CLI and Pi.
+3. **Turns on sync for `git push` / `git pull` / `git clone`.**
+
+On a second laptop, the same command finds the existing repo and reconnects. Everything else, including which projects go where, is already stored in the repo.
+
+**Inside an agent instead:** in Claude Code or Copilot CLI run `/mem-mastero:setup`, and the agent asks the questions in chat. Needs: Node.js 18+, git, and [GitHub CLI](https://cli.github.com) signed in (`gh auth login`) for the GitHub option.
+
+### Personal and work accounts
+
+Run `setup` once per account. A work memory repo takes **only** the projects you list for it, and everything else goes to your personal one:
 
 ```bash
-claude plugin install mem-mastero@mem-mastero
+npx github:Shaf2665/mem-mastero setup     # pick your work account → "dev.azure.com/acme/*, github.com/acme"
+npx github:Shaf2665/mem-mastero setup     # pick your personal account → Enter (all other projects)
 ```
 
-Restart Claude Code.
-</details>
-
-<details open>
-<summary><b>OpenAI Codex</b> (CLI, desktop app)</summary>
-
-```bash
-codex plugin marketplace add Shaf2665/mem-mastero
+```
+mem-mastero stores:
+  • github.com/acme/claude-memory       ←  dev.azure.com/acme/*, github.com/acme
+  • github.com/shaf2665/claude-memory   ←  all other projects
 ```
 
-```bash
-codex plugin add mem-mastero@mem-mastero
-```
+- **Company memory stays in the company account.** Projects are matched by their git remote, so an Azure Repos or GitHub-org project from work never lands in your personal repo.
+- **Both accounts work side by side.** The account name is part of each memory repo's URL (`https://you-at-work@github.com/...`), so git signs in with the right account for each. There's no switching.
+- **A work-only laptop** just runs setup with the work account. Personal projects then aren't synced on it at all.
+- **Check where a repo's memory goes:** run `npx github:Shaf2665/mem-mastero status` inside the repo. Patterns are git-remote globs: `dev.azure.com/org/*`, or `github.com/org` for that owner and everything under it.
 
-Then run `codex`, open **`/hooks`**, review and **trust** mem-mastero's hooks, and start a new thread. The Codex desktop app uses the same install; restart it afterwards.
-</details>
+<details>
+<summary><b>Manual installation</b> (per agent, and config file)</summary>
 
-<details open>
-<summary><b>Pi coding agent</b> (beta)</summary>
+| Agent | Install |
+|---|---|
+| Claude Code | `/plugin marketplace add Shaf2665/mem-mastero` then `/plugin install mem-mastero@mem-mastero` |
+| Codex | `codex plugin marketplace add Shaf2665/mem-mastero` then `codex plugin add mem-mastero@mem-mastero`. Then open `/hooks` in codex and trust mem-mastero. |
+| Copilot CLI | `copilot plugin marketplace add Shaf2665/mem-mastero` then `copilot plugin install mem-mastero@mem-mastero` |
+| Pi (beta) | `pi install git:github.com/Shaf2665/mem-mastero` |
 
-```bash
-pi install git:github.com/Shaf2665/mem-mastero
-```
-
-Restart `pi`. At startup you'll see a `mem-mastero: pi ...` notice showing what was synced.
-</details>
-
-<details open>
-<summary><b>GitHub Copilot CLI</b></summary>
-
-```bash
-copilot plugin marketplace add Shaf2665/mem-mastero
-```
-
-```bash
-copilot plugin install mem-mastero@mem-mastero
-```
-
-Or inside an interactive Copilot CLI session:
-
-```
-/plugin marketplace add Shaf2665/mem-mastero
-/plugin install mem-mastero@mem-mastero
-```
-
-Restart `copilot`. Copilot CLI can also sync sessions to your GitHub account by itself (`/chronicle`). mem-mastero additionally restores the session files on your other machines, so `copilot --resume` finds them there. Machine-local lock files (`inuse.*.lock`) are never synced.
-</details>
-
-### Step 2: Choose where to sync
-
-#### Option A: Google Drive (default, no config needed)
-
-1. Install **Google Drive for Desktop** and sign in.
-2. That's it. mem-mastero finds your Drive folder automatically:
-   - Windows: `G:\My Drive` (any drive letter)
-   - macOS: `~/Library/CloudStorage/GoogleDrive-*/My Drive`
-
-To use a different folder (for example an `rclone mount` on Linux, or Dropbox or OneDrive), create `~/.mem-mastero.json`:
+The config file is `~/.mem-mastero.json`; `setup` writes it for you:
 
 ```json
-{ "dir": "/path/to/synced/folder" }
+{ "stores": [
+  { "github": "https://you-at-work@github.com/acme/claude-memory.git", "for": ["dev.azure.com/acme/*"] },
+  { "github": "https://you@github.com/you/claude-memory.git" }
+] }
 ```
 
-#### Option B: Private GitHub repo
+- **A store with no `for`** takes every project that no other store claims.
+- **Google Drive store:** `{ "dir": "/path/to/folder" }`, or `{}`, which auto-detects `G:\My Drive` / `~/Library/CloudStorage/GoogleDrive-*/My Drive`.
+- **v0.7 configs** (`{ "github": "..." }` / `{ "dir": "..." }`) keep working as a single store.
 
-1. Create a **private** repo to hold your memory:
+Git sync on its own: `npx github:Shaf2665/mem-mastero install-git-hooks` (undo: `uninstall-git-hooks`).
+</details>
 
-   ```bash
-   gh repo create claude-memory --private
-   ```
-
-2. Create `~/.mem-mastero.json` on **every** machine. On Windows that's `C:\Users\<you>\.mem-mastero.json`.
-
-   ```json
-   { "github": "https://github.com/<your-username>/claude-memory.git" }
-   ```
-
-3. Make sure git can push to it without a prompt. Any of these works:
-   - Git Credential Manager (bundled with Git for Windows)
-   - an SSH key (then use the `git@github.com:...` URL)
-   - `gh auth setup-git`
-
-On first use the repo is cloned to `~/.mem-mastero/repo`.
-
-### Step 3 (recommended): Sync on `git push` / `git pull` / `git clone`
-
-This makes memory follow your code. It works with GitHub, Azure Repos, GitLab and Bitbucket, from the terminal, VS Code, Visual Studio or any git client. It also works for every agent, even when no agent is open.
+### Notes on git push / pull sync
 
 | You run | mem-mastero does |
 |---|---|
@@ -160,28 +125,10 @@ This makes memory follow your code. It works with GitHub, Azure Repos, GitLab an
 | `git pull` (merge or rebase) | downloads them into Claude Code / Codex / Copilot / Pi's folders |
 | `git clone` | downloads them for the fresh clone |
 
-Turn it on once per machine:
-
-```bash
-node ~/.claude/plugins/marketplaces/mem-mastero/sync.js install-git-hooks
-```
-
-That path is where Claude Code keeps the plugin. With Codex it's `~/.codex/.tmp/marketplaces/mem-mastero/sync.js`, but any copy of `sync.js` works. The command copies itself to `~/.mem-mastero/sync.js` and sets git's global `core.hooksPath` to `~/.mem-mastero/git-hooks`. Undo it with:
-
-```bash
-node ~/.mem-mastero/sync.js uninstall-git-hooks
-```
-
-Good to know:
-
+- **It works with any remote** (GitHub, Azure Repos, GitLab, Bitbucket) and from any git client.
 - **Your repos' own hooks keep working.** Every hook mem-mastero installs runs the repo's `.git/hooks/<name>` afterwards (Git LFS, pre-commit, and so on).
-- **It won't overwrite another global hooks path.** If you already set a global `core.hooksPath`, install refuses and changes nothing. Repos that set their own local `core.hooksPath` (for example Husky) keep their hooks, but don't get git-triggered sync. The agent hooks still sync them.
+- **It won't overwrite another global hooks path.** If you already set a global `core.hooksPath`, install refuses. Repos with their own local `core.hooksPath` (Husky) keep their hooks and still sync when the agent starts.
 - **`git fetch` alone has no git hook**, and neither does a `git pull` that says "Already up to date". Memory still arrives when you next start your agent.
-- **New clones:** the clone path can differ from the folder your agent later opens (for example a different drive-letter case), so agent startup remains the guaranteed sync. Treat the clone sync as a head start.
-
-### Step 4: Repeat on your other machines
-
-Install the plugin in the same agents, set up the same backend, and (optionally) the git hooks. Open or pull the repo and your history arrives.
 
 ---
 

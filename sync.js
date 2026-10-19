@@ -4,7 +4,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { execFileSync, spawn } = require('child_process');
+const { execFileSync, spawn, spawnSync } = require('child_process');
 
 const SLACK_MS = 2000; // Drive rounds mtimes; anything within 2s counts as "same"
 
@@ -204,8 +204,54 @@ const AGENTS = {
   },
 };
 
+const CONFIG = () => path.join(os.homedir(), '.mem-mastero.json');
 function readConfig() {
-  try { return JSON.parse(fs.readFileSync(path.join(os.homedir(), '.mem-mastero.json'), 'utf8')); } catch { return {}; }
+  try { return JSON.parse(fs.readFileSync(CONFIG(), 'utf8')); } catch { return {}; }
+}
+
+// --- Stores: where memory goes. ~/.mem-mastero.json
+//   { "stores": [ { "github": "https://work-user@github.com/acme/claude-memory.git", "for": ["dev.azure.com/acme/*"] },
+//                 { "github": "https://me@github.com/me/claude-memory.git" } ] }
+// A project goes to the first store whose `for` patterns match its git remote; a store without `for` takes
+// every other project. No match and no catch-all store: the project isn't synced (e.g. a work-only laptop).
+// Legacy configs {"github": url} / {"dir": path} / {} (Drive) are one catch-all store.
+function storesOf(cfg) {
+  if (Array.isArray(cfg.stores)) return cfg.stores;
+  return [cfg.github ? { github: cfg.github } : { dir: cfg.dir }];
+}
+
+// "dev.azure.com/acme/*" (glob) or "github.com/acme" (that owner and everything under it).
+function matches(pattern, id) {
+  const p = pattern.toLowerCase().replace(/\/+$/, '');
+  if (!p.includes('*')) return id === p || id.startsWith(p + '/');
+  return new RegExp('^' + p.split('*').map(s => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$').test(id);
+}
+
+function pickStore(cfg, id) {
+  if (process.env.MEM_MASTERO_DIR) return { dir: process.env.MEM_MASTERO_DIR }; // env beats config (tests, one-off syncs)
+  const stores = storesOf(cfg);
+  return stores.find(s => s.for && s.for.some(p => matches(p, id))) || stores.find(s => !s.for) || null;
+}
+
+const storeName = s => s.github ? normalizeRemote(s.github) : (s.dir || 'Google Drive');
+
+// Local folder holding a store's files: a clone of its repo, or the Drive/dir folder.
+function storeRoot(s, { clone = true } = {}) {
+  if (!s.github) return s.dir || driveRoot({});
+  const dir = cloneDir(s.github);
+  if (clone && !fs.existsSync(path.join(dir, '.git'))) {
+    fs.mkdirSync(path.dirname(dir), { recursive: true });
+    execFileSync('git', ['clone', '-q', '-c', 'core.autocrlf=false', s.github, dir], { stdio: 'ignore', env: GIT_ENV() });
+  }
+  return dir;
+}
+
+// One clone per memory repo: ~/.mem-mastero/repos/<host_owner_name>. The v0.7 single clone (~/.mem-mastero/repo)
+// keeps being used for the repo it already holds.
+function cloneDir(url) {
+  const legacy = CLONE();
+  try { if (normalizeRemote(git(legacy, 'remote', 'get-url', 'origin')) === normalizeRemote(url)) return legacy; } catch {}
+  return path.join(BASE(), 'repos', normalizeRemote(url).replace(/[^a-z0-9._-]+/g, '_'));
 }
 
 function driveRoot(cfg) {
@@ -228,18 +274,11 @@ const CLONE = () => path.join(BASE(), 'repo');
 // MEM_MASTERO_INHIBIT: our own git calls must not trigger mem-mastero's global git hooks (recursion).
 const GIT_ENV = () => ({ ...process.env, GIT_TERMINAL_PROMPT: '0', MEM_MASTERO_INHIBIT: '1' });
 // Fixed identity: commits/rebases must work on machines with no git user configured.
-const git = (dir, ...args) => execFileSync('git', ['-C', dir, '-c', 'user.name=mem-mastero', '-c', 'user.email=mem-mastero@localhost', ...args], {
+// core.autocrlf=false: memory files are stored and checked out byte-for-byte. Git for Windows defaults to
+// autocrlf=true, which turns LF into CRLF on checkout: sessions would change, and split parts fail their SHA-256.
+const git = (dir, ...args) => execFileSync('git', ['-C', dir, '-c', 'user.name=mem-mastero', '-c', 'user.email=mem-mastero@localhost', '-c', 'core.autocrlf=false', ...args], {
   encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: GIT_ENV(),
 });
-
-function githubClone(url) {
-  const dir = CLONE();
-  if (!fs.existsSync(path.join(dir, '.git'))) {
-    fs.mkdirSync(path.dirname(dir), { recursive: true });
-    execFileSync('git', ['clone', '-q', url, dir], { stdio: 'ignore', env: GIT_ENV() });
-  }
-  return dir;
-}
 
 // One sync at a time per clone: agent hooks, git hooks and background pushes can overlap,
 // and a second pullPush would abort the first one's rebase. Waits up to 30s; a lock older than 2 min is stale.
@@ -252,6 +291,20 @@ function withLock(dir, fn) {
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
   }
   try { fn(); return true; } finally { fs.rmSync(lock, { force: true }); }
+}
+
+// Clones made before v0.8 may hold CRLF-converted checkouts: switch them to exact bytes once, if nothing is uncommitted.
+function exactEol(dir) {
+  try { if (git(dir, 'config', '--local', '--get', 'core.autocrlf').trim() === 'false') return; } catch {}
+  // Clean under the clone's *own* EOL setting (git() forces autocrlf=false, which would show every CRLF file as changed).
+  const dirty = execFileSync('git', ['-C', dir, 'status', '--porcelain'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], env: GIT_ENV() }).trim();
+  if (dirty) return; // never touch uncommitted work; retried next sync
+  git(dir, 'config', 'core.autocrlf', 'false');
+  // Keep each file's mtime: newest-wins compares them, and a fresh "now" would make the clone beat unpushed local edits.
+  const files = fs.readdirSync(dir, { recursive: true }).filter(f => !/^\.git([\\/]|$)/.test(f) && fs.statSync(path.join(dir, f)).isFile());
+  const times = files.map(f => [f, fs.statSync(path.join(dir, f)).mtime]);
+  try { git(dir, 'rm', '-r', '-q', '--cached', '.'); git(dir, 'reset', '-q', '--hard'); } catch {} // re-checkout from the stored bytes
+  for (const [f, t] of times) try { fs.utimesSync(path.join(dir, f), t, t); } catch {}
 }
 
 function commit(dir) {
@@ -284,13 +337,15 @@ function run(names, mode, input, loud = mode === 'start') {
   const id = repoId(cwd);
   if (!id) return say('no git "origin" remote in this folder, so sync is skipped (the remote URL is how projects are matched across machines).');
 
-  // MEM_MASTERO_DIR (env) beats the config file, so one shell can sync somewhere else (e.g. a test folder).
-  const github = !process.env.MEM_MASTERO_DIR && cfg.github;
-  const root = github ? githubClone(cfg.github) : driveRoot(cfg);
-  if (!root) return say('no sync target. Install Google Drive for Desktop, or set ~/.mem-mastero.json {"dir": "..."} or {"github": "<private repo url>"}. Sync skipped.');
+  const store = pickStore(cfg, id);
+  if (!store) return say(`${id} matches none of your stores, so it isn't synced. To sync it, run: npx github:Shaf2665/mem-mastero setup`);
+  const github = !!store.github;
+  const root = storeRoot(store);
+  if (!root) return say('no sync target. Run `npx github:Shaf2665/mem-mastero setup` (or install Google Drive for Desktop). Sync skipped.');
   if (mode === 'start' && fs.existsSync(path.join(BASE(), 'git-hooks'))) refreshHookScript();
 
   const work = () => {
+    if (github) exactEol(root);
     const jobs = names.map(name => {
       const agent = AGENTS[name];
       const c = { input, cwd, id, mode, local: agent.local(input, cwd), remote: path.join(root, ...agent.remote(id)) };
@@ -300,13 +355,13 @@ function run(names, mode, input, loud = mode === 'start') {
     if (github) {
       commit(root);
       if (mode === 'push') {
-        if (jobs.some(j => j.pushed.length)) spawn(process.execPath, [__filename, 'gitpush'], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+        if (jobs.some(j => j.pushed.length)) spawn(process.execPath, [__filename, 'gitpush', root], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
       } else pullPush(root); // git rewrites mtimes of files it updates, so they count as newer than local
     }
     for (const { name, c, pushed } of jobs) {
       const pulled = mode === 'push' ? [] : syncDir(c.remote, c.local, false);
       if (loud && mode !== 'start' && !pulled.length && !pushed.length) continue;
-      say(`${name} ${id} (${github ? 'GitHub' : 'Drive'}): pulled ${pulled.length}, pushed ${pushed.length} file(s).`);
+      say(`${name} ${id} (${github ? 'GitHub' : 'Drive'}${storesOf(cfg).length > 1 ? ` → ${storeName(store)}` : ''}): pulled ${pulled.length}, pushed ${pushed.length} file(s).`);
       // Claude may have loaded MEMORY.md before this hook ran, so hand the fresh copy to the session directly.
       const mem = path.join('memory', 'MEMORY.md');
       if (mode === 'start' && pulled.includes(mem)) {
@@ -369,7 +424,8 @@ function uninstallGitHooks() {
 function gitHook(name, args) {
   let top;
   try { top = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return; }
-  if (path.resolve(top).toLowerCase() === path.resolve(CLONE()).toLowerCase()) return; // the memory repo itself
+  const inBase = path.relative(BASE().toLowerCase(), path.resolve(top).toLowerCase());
+  if (!inBase.startsWith('..') && !path.isAbsolute(inBase)) return; // a memory repo clone itself
   if (name === 'pre-push') {
     return spawn(process.execPath, [__filename, 'git-bg-push', top], { detached: true, stdio: 'ignore', windowsHide: true, env: GIT_ENV() }).unref();
   }
@@ -377,7 +433,146 @@ function gitHook(name, args) {
   if (pull) run(Object.keys(AGENTS), 'pull', { cwd: top }, true);
 }
 
-module.exports = { syncDir, normalizeRemote, headCwd, AGENTS };
+// --- setup: one command to create or reconnect a store, on any machine.
+//   mem-mastero setup                         interactive: pick account, Enter, Enter
+//   mem-mastero setup --account me --repo me/claude-memory --for "dev.azure.com/acme/*" --yes
+//   mem-mastero setup --drive                 Google Drive instead of GitHub
+// Reconnecting a store reuses the project rules saved in it (mem-mastero.json), so a new laptop asks nothing else.
+const PLUGIN = 'Shaf2665/mem-mastero';
+const sh = (cmd, args, opts = {}) => spawnSync(cmd, args, { encoding: 'utf8', shell: process.platform === 'win32', windowsHide: true, ...opts });
+
+function ghAccounts() {
+  const r = sh('gh', ['auth', 'status']);
+  return [...`${r.stdout || ''}${r.stderr || ''}`.matchAll(/Logged in to (\S+) account (\S+)/g)].map(m => ({ host: m[1], user: m[2] }));
+}
+
+function parseArgs(argv) {
+  const o = {};
+  for (let i = 0; i < argv.length; i++) {
+    const k = argv[i].replace(/^--/, '');
+    if (['yes', 'drive', 'no-hooks', 'no-agents'].includes(k)) o[k] = true; else o[k] = argv[++i];
+  }
+  return o;
+}
+
+// Install the plugin into every agent CLI found on this machine (already-installed ones are skipped by the CLIs).
+function installAgents(say) {
+  const steps = {
+    claude: [['plugin', 'marketplace', 'add', PLUGIN], ['plugin', 'install', 'mem-mastero@mem-mastero']],
+    codex: [['plugin', 'marketplace', 'add', PLUGIN], ['plugin', 'add', 'mem-mastero@mem-mastero']],
+    copilot: [['plugin', 'marketplace', 'add', PLUGIN], ['plugin', 'install', 'mem-mastero@mem-mastero']],
+    pi: [['install', `git:github.com/${PLUGIN}`]],
+  };
+  for (const [cli, cmds] of Object.entries(steps)) {
+    if (sh(cli, ['--version']).status !== 0) continue;
+    const ok = cmds.map(args => sh(cli, args).status === 0).pop();
+    say(`  ${ok ? '✓' : '·'} ${cli}${ok ? '' : ' (already installed, or see its plugin docs)'}${cli === 'codex' ? ' — open /hooks in codex once and trust mem-mastero' : ''}`);
+  }
+}
+
+async function setup(argv) {
+  const o = parseArgs(argv);
+  const rl = process.stdin.isTTY && !o.yes ? require('readline/promises').createInterface({ input: process.stdin, output: process.stdout }) : null;
+  const ask = async (q, def = '') => (rl ? (await rl.question(`${q}${def ? ` [${def}]` : ''}: `)).trim() : '') || def;
+  const say = m => console.log(m);
+  try {
+    // 1. Which store
+    let store;
+    if (o.drive || o.dir) store = o.dir ? { dir: o.dir } : {};
+    else {
+      let repo = o.repo, account = o.account;
+      if (!repo) {
+        const accts = ghAccounts();
+        if (!accts.length) {
+          repo = await ask('Private repo URL for your memory (Enter = use Google Drive instead)');
+        } else {
+          if (!account) {
+            if (accts.length === 1) account = accts[0].user;
+            else {
+              say('GitHub accounts signed in on this machine:');
+              accts.forEach((a, i) => say(`  ${i + 1}) ${a.user}${a.host === 'github.com' ? '' : ` (${a.host})`}`));
+              account = (accts[Number(await ask('Which account holds this memory?', '1')) - 1] || accts[0]).user;
+            }
+          }
+          repo = await ask('Memory repo', `${account}/claude-memory`);
+        }
+      }
+      if (!repo) store = {};
+      else {
+        const isUrl = /[:\\/]/.test(repo) && !/^[\w.-]+\/[\w.-]+$/.test(repo);
+        if (!isUrl) { // owner/name on GitHub: find it, or create it private
+          const env = { ...process.env };
+          const tok = account && sh('gh', ['auth', 'token', '--user', account]).stdout;
+          if (tok && tok.trim()) env.GH_TOKEN = tok.trim();
+          if (sh('gh', ['api', `repos/${repo}`, '--silent'], { env }).status === 0) say(`✓ Found ${repo}`);
+          else if (o.yes || /^y/i.test(await ask(`${repo} doesn't exist. Create it as a private repo? (Y/n)`, 'Y'))) {
+            const r = sh('gh', ['repo', 'create', repo, '--private', '--description', 'Coding-agent memory, synced by mem-mastero'], { env });
+            if (r.status !== 0) throw new Error(`couldn't create ${repo}: ${(r.stderr || '').trim()}`);
+            say(`✓ Created private repo ${repo}`);
+          } else return say('Nothing changed.');
+        }
+        // The account name in the URL makes git use that account's login, so personal and work repos work side by side.
+        store = { github: isUrl ? repo : `https://${account ? account + '@' : ''}github.com/${repo}.git` };
+      }
+    }
+
+    // 2. Connect: clone (git may open a browser sign-in the first time) and point the clone at this URL.
+    const root = storeRoot(store, { clone: false });
+    if (!root) throw new Error('Google Drive for Desktop not found. Install it, or run setup with --repo <owner/name>.');
+    if (store.github) {
+      if (!fs.existsSync(path.join(root, '.git'))) {
+        fs.mkdirSync(path.dirname(root), { recursive: true });
+        // stdin/stdout stay attached so git's sign-in (browser or prompt) works the first time; stderr is shown only on failure.
+        const r = spawnSync('git', ['clone', '-q', '-c', 'core.autocrlf=false', store.github, root], { stdio: ['inherit', 'inherit', 'pipe'], encoding: 'utf8', env: { ...process.env, MEM_MASTERO_INHIBIT: '1' } });
+        if (r.status !== 0) throw new Error(`couldn't clone ${store.github}: ${(r.stderr || '').trim()}\nCheck you can access it with that account, then run setup again.`);
+      } else { git(root, 'remote', 'set-url', 'origin', store.github); exactEol(root); try { git(root, 'pull', '-q', '--rebase'); } catch {} }
+    } else fs.mkdirSync(root, { recursive: true });
+    say(`✓ Connected to ${storeName(store)}`);
+
+    // 3. Which projects go here: from --for, else the rules saved in the store, else ask once.
+    const rulesFile = path.join(root, 'mem-mastero.json');
+    let saved; try { saved = JSON.parse(fs.readFileSync(rulesFile, 'utf8')).for; } catch {}
+    let rules = o.for !== undefined ? o.for : saved !== undefined ? saved : await ask(
+      'Which projects belong here? Enter = all projects (personal). For a work account give patterns, e.g. dev.azure.com/your-org/*, github.com/your-org');
+    if (typeof rules === 'string') rules = rules.split(/[,\s]+/).filter(Boolean);
+    if (!rules || !rules.length) rules = null;
+    if (rules) store.for = rules;
+    if (JSON.stringify(saved ?? null) !== JSON.stringify(rules)) { // save, so other machines reconnect with no questions
+      fs.writeFileSync(rulesFile, JSON.stringify({ for: rules, note: 'Projects stored here (git remote patterns). null = all projects not claimed by another store.' }, null, 2) + '\n');
+      if (store.github) withLock(root, () => { commit(root); pullPush(root); });
+    }
+
+    // 4. Save: replace this store if known; one catch-all at most; rule-based stores are checked first.
+    const cfg = readConfig();
+    let stores = (cfg.stores || (cfg.github || cfg.dir ? storesOf(cfg) : [])).filter(s => storeName(s) !== storeName(store));
+    if (!rules) {
+      const old = stores.find(s => !s.for);
+      if (old) say(`  (${storeName(old)} no longer takes all other projects; ${storeName(store)} does now)`);
+      stores = stores.filter(s => s.for);
+    }
+    stores = [...stores, store].sort((x, y) => !!y.for - !!x.for);
+    fs.writeFileSync(CONFIG(), JSON.stringify({ stores }, null, 2) + '\n');
+
+    // 5. Agents + git hooks
+    if (!o['no-agents']) { say('Plugin in your coding agents:'); installAgents(say); }
+    if (!o['no-hooks'] && (o.yes || /^y/i.test(await ask('Also sync on git push / pull / clone? (Y/n)', 'Y')))) installGitHooks();
+
+    say('');
+    status();
+  } finally { rl && rl.close(); }
+}
+
+function status() {
+  const cfg = readConfig(), stores = storesOf(cfg);
+  console.log('mem-mastero stores:');
+  for (const s of stores) console.log(`  • ${storeName(s)}  ←  ${s.for ? s.for.join(', ') : stores.length > 1 ? 'all other projects' : 'all projects'}`);
+  const id = repoId(process.cwd());
+  if (id) { const s = pickStore(cfg, id); console.log(`This repo (${id}) → ${s ? storeName(s) : 'not synced (matches no store)'}`); }
+  const hooks = globalGit('--get', 'core.hooksPath');
+  console.log(`Git push/pull sync: ${hooks && path.resolve(hooks) === path.resolve(hooksDir()) ? 'on' : 'off'}`);
+}
+
+module.exports = { syncDir, normalizeRemote, headCwd, AGENTS, matches, pickStore, storesOf };
 
 // Git runs hooks with repo-local variables (GIT_DIR, GIT_INDEX_FILE, ...) pointing at the repo being pushed.
 // Inherited, they would aim every git call here, including commit/push of the memory repo, at *that* repo
@@ -389,8 +584,19 @@ const GIT_LOCAL_ENV = ['GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_CONFIG', 'GIT_CO
 if (require.main === module) {
   for (const k of GIT_LOCAL_ENV) delete process.env[k];
   const [a, b, ...rest] = process.argv.slice(2);
+  if (a === 'setup') { // interactive; may take a while (sign-in), and failures should exit non-zero
+    setup(process.argv.slice(3)).then(() => process.exit(0), e => { console.error(`mem-mastero setup: ${e.message}`); process.exit(1); });
+    return;
+  }
   try {
-    if (a === 'gitpush' || b === 'gitpush') { const dir = githubClone(readConfig().github); withLock(dir, () => pullPush(dir)); } // background push
+    if (a === 'status') status();
+    else if (a === 'help' || (!a && process.stdin.isTTY)) console.log(`mem-mastero ${(() => { try { return require('./package.json').version; } catch { return ''; } })()}
+  setup                  connect this machine (create or reconnect a memory repo, personal or work)
+  status                 show your stores and where this repo's memory goes
+  install-git-hooks      sync on git push / pull / clone      (uninstall-git-hooks to undo)
+  <agent> start|push|pull  sync one repo now (agent: claude, codex, copilot, pi)`);
+    else
+    if (a === 'gitpush') { const dir = b || CLONE(); withLock(dir, () => pullPush(dir)); } // background push of one memory clone
     else if (a === 'install-git-hooks') installGitHooks();
     else if (a === 'uninstall-git-hooks') uninstallGitHooks();
     else if (a === 'git') gitHook(b, rest);
