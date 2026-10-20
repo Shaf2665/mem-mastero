@@ -322,7 +322,8 @@ function pullPush(dir) {
 
 function readStdin() {
   let input = {};
-  try { input = JSON.parse(fs.readFileSync(0, 'utf8') || '{}'); } catch {}
+  // From a terminal there's no hook JSON coming, and reading stdin would wait forever.
+  if (!process.stdin.isTTY) try { input = JSON.parse(fs.readFileSync(0, 'utf8') || '{}'); } catch {}
   // Troubleshooting: MEM_MASTERO_LOG=<file> records what each agent's hook sent.
   if (process.env.MEM_MASTERO_LOG) fs.appendFileSync(process.env.MEM_MASTERO_LOG, JSON.stringify({ at: new Date().toISOString(), argv: process.argv.slice(2), input }) + '\n');
   return input;
