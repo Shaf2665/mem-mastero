@@ -4,7 +4,7 @@
 
 https://github.com/user-attachments/assets/35518702-83cb-4cb6-9a97-68fed34d2910
 
-<sub>Video file: [`assets/demo.mp4`](assets/demo.mp4)</sub>
+<sub>Video file: [`site/demo.mp4`](site/demo.mp4)</sub>
 
 Claude Code, Codex, Copilot CLI and Pi keep your chat history and memory **on the machine where you worked**. Clone the same repo on another laptop and the agent starts from zero.
 
