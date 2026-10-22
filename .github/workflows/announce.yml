@@ -1,7 +1,8 @@
-# Announces releases on X. A push to main that contains a "vX.Y.Z: ..." commit posts
-# "<repo name> vX.Y.Z is out: ..." with the repo link. Run it by hand (Actions > Post to X > Run workflow)
-# to post your own text. Needs four repo secrets; see .github/post-to-x.js.
-name: Post to X
+# Announces releases. A push to main that contains a "vX.Y.Z: ..." commit creates a GitHub Release and
+# writes a one-click "Post on X" link into the run summary (both free). With secrets set it also posts to
+# Bluesky (free) and through the X API (paid). Run it by hand (Actions > Announce > Run workflow) to
+# announce your own text. Details in .github/announce.js.
+name: Announce
 
 on:
   push:
@@ -12,24 +13,27 @@ on:
         description: Text to post (up to 280 characters, a link counts as 23; longer text is trimmed)
         required: true
       dry_run:
-        description: Only print what would be posted
+        description: Only show what would be posted
         type: boolean
         default: true
 
 permissions:
-  contents: read
+  contents: write # to create the GitHub Release and its tag
 
 jobs:
-  post:
+  announce:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: node .github/post-to-x.js
+      - run: node .github/announce.js
         env:
           # Passed through env, never inlined into the script: commit messages and inputs are untrusted text.
           COMMITS: ${{ toJSON(github.event.commits) }}
           TEXT: ${{ inputs.text }}
           DRY_RUN: ${{ inputs.dry_run }}
+          GITHUB_TOKEN: ${{ github.token }}
+          BLUESKY_HANDLE: ${{ secrets.BLUESKY_HANDLE }}
+          BLUESKY_APP_PASSWORD: ${{ secrets.BLUESKY_APP_PASSWORD }}
           X_API_KEY: ${{ secrets.X_API_KEY }}
           X_API_SECRET: ${{ secrets.X_API_SECRET }}
           X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
