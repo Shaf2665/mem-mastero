@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mem-mastero</title>
+<meta name="description" content="Sync coding-agent sessions and memory for each repo across machines via your Google Drive or a private GitHub repo.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧠</text></svg>">
+<style>
+  :root {
+    --bg: #ffffff;
+    --fg: #1a1a1a;
+    --muted: #5c5c5c;
+    --line: #e6e6e6;
+    --code-bg: #f5f5f5;
+    --accent: #2f6fde;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #111213;
+      --fg: #ececec;
+      --muted: #a0a0a0;
+      --line: #2a2b2d;
+      --code-bg: #1c1d1f;
+      --accent: #6ea0ff;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 760px; margin: 0 auto; padding: 56px 16px 40px; }
+  h1 { font-size: 2.4rem; margin: 0 0 8px; letter-spacing: -0.02em; }
+  h2 { font-size: 1.25rem; margin: 48px 0 12px; }
+  p { margin: 0 0 14px; }
+  .lead { font-size: 1.2rem; color: var(--muted); margin-bottom: 28px; }
+  a { color: var(--accent); }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 0.92em; }
+  code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+  pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; overflow-x: auto; margin: 0 0 14px; }
+  pre code { background: none; padding: 0; }
+  video { width: 100%; border-radius: 8px; border: 1px solid var(--line); display: block; margin: 0 0 28px; }
+  .table-wrap { overflow-x: auto; margin: 0 0 14px; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-weight: 600; }
+  td:nth-child(2) { white-space: nowrap; }
+  ul, ol { padding-left: 22px; margin: 0 0 14px; }
+  li { margin-bottom: 6px; }
+  .links { display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 28px; }
+  footer { border-top: 1px solid var(--line); margin-top: 56px; padding-top: 20px; color: var(--muted); font-size: 0.9rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>mem-mastero</h1>
+  <p class="lead">Your coding agent's sessions and memory follow each repo across every machine.</p>
+
+  <div class="links">
+    <a href="https://github.com/Shaf2665/mem-mastero">GitHub</a>
+    <a href="https://github.com/Shaf2665/mem-mastero#readme">Documentation</a>
+  </div>
+
+  <video src="demo.mp4" controls muted playsinline preload="metadata"></video>
+
+  <p>Claude Code, Codex, Copilot CLI and Pi keep your chat history and memory <strong>on the machine where you worked</strong>. Clone the same repo on another laptop and the agent starts from zero.</p>
+  <p>mem-mastero syncs that history through storage <strong>you own</strong>, either a <strong>private GitHub repo</strong> or <strong>Google Drive</strong>. It syncs when your agent starts and finishes a turn, and also when you <code>git push</code> and <code>git pull</code>.</p>
+
+  <h2>Get started</h2>
+  <p>Requires <a href="https://nodejs.org">Node.js</a> 18.17+ and <a href="https://git-scm.com">git</a>. For the GitHub option, <a href="https://cli.github.com">GitHub CLI</a> signed in with <code>gh auth login</code>.</p>
+  <pre><code>npx github:Shaf2665/mem-mastero setup</code></pre>
+  <p>Run that one command on every machine. Projects are matched by their <strong>git remote</strong>, not their folder path, so <code>D:\Work\app</code> on your PC and <code>~/code/app</code> on your Mac share the same sessions.</p>
+  <p>That one command does three things:</p>
+  <ol>
+    <li><strong>Connects your memory repo.</strong> It finds the repo on the account you picked, or creates it as private.</li>
+    <li><strong>Installs the plugin</strong> into every coding agent it finds: Claude Code, Codex, Copilot CLI and Pi.</li>
+    <li><strong>Turns on sync for <code>git push</code> / <code>git pull</code> / <code>git clone</code></strong>, for every repo on the machine.</li>
+  </ol>
+
+  <h2>Supported agents</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Agent</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>Claude Code (CLI, desktop, IDE)</td><td>✅ Supported</td></tr>
+        <tr><td>OpenAI Codex (CLI, desktop app)</td><td>✅ Supported</td></tr>
+        <tr><td>GitHub Copilot CLI</td><td>✅ Supported</td></tr>
+        <tr><td>Pi coding agent</td><td>🧪 Beta</td></tr>
+        <tr><td>Copilot Chat in VS Code / JetBrains</td><td>⏳ Not yet</td></tr>
+        <tr><td>OpenCode</td><td>⏳ Not yet</td></tr>
+        <tr><td>Gemini CLI / Antigravity, Cursor, Windsurf, Cline, Aider</td><td>⏳ Not yet</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>Personal and work accounts</h2>
+  <p>Run <code>setup</code> once per account. A work memory repo takes only the projects you list for it; everything else goes to your personal one, so company memory stays in the company account.</p>
+
+  <h2>Security and privacy</h2>
+  <ul>
+    <li><strong>Transcripts can contain anything</strong> you pasted or a tool printed. Store them only in a <strong>private</strong> repo, or a Drive you control.</li>
+    <li><strong>mem-mastero stores no tokens or passwords.</strong> Sign-in is handled by GitHub CLI and Git Credential Manager.</li>
+    <li><strong>No dependencies:</strong> one Node script and git.</li>
+  </ul>
+
+  <footer>
+    <a href="https://github.com/Shaf2665/mem-mastero">github.com/Shaf2665/mem-mastero</a> · <a href="https://github.com/Shaf2665/mem-mastero/blob/main/LICENSE">MIT License</a>
+  </footer>
+</main>
+</body>
+</html>
