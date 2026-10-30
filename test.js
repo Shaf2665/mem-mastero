@@ -118,6 +118,25 @@ assert.match(MA.run('pi', 'start'), /pushed 1 file/);
   assert.match(notes[0], /pi github\.com\/me\/demo .*pulled 1/);
   assert(fs.existsSync(path.join(piDir(MB), '2026-10-18_s1.jsonl')), 'Pi session pulled into this machine\'s cwd folder');
 
+  // Imported sessions keep their original cwd bytes, but generic pushes still know their project.
+  const oldCwd = path.join(t, 'old-machine-no-longer-present');
+  for (const [agent, relative, local] of [
+    ['codex', path.join(day, 'rollout-imported.jsonl'), path.join(MB.codex, day, 'rollout-imported.jsonl')],
+    ['copilot', path.join('sid-imported', 'events.jsonl'), path.join(MB.copilot, 'sid-imported', 'events.jsonl')],
+    ['pi', '2026-10-18_imported.jsonl', path.join(piDir(MB), '2026-10-18_imported.jsonl')],
+  ]) {
+    const remote = path.join(hub, agent, 'projects', 'github.com', 'me', 'demo', relative);
+    const header = JSON.stringify({ cwd: oldCwd }) + '\n';
+    put(remote, header);
+    MB.run(agent, 'pull');
+    assert.strictEqual(fs.readFileSync(local, 'utf8'), header, 'import does not rewrite session metadata');
+    fs.appendFileSync(local, '{"resumed":true}\n');
+    const modified = new Date(Date.now() + 10000);
+    fs.utimesSync(local, modified, modified);
+    MB.run(agent, 'push');
+    assert.match(fs.readFileSync(remote, 'utf8'), /"resumed":true/, `${agent}: generic push includes imported session`);
+  }
+
   // Big sessions: stored as line-aligned parts in the synced folder, rebuilt byte-for-byte on pull.
   for (const m of [MA, MB]) m.env.MEM_MASTERO_PART_BYTES = '100';
   const claudeDir = m => path.join(m.h, '.claude', 'projects', m.repo.replace(/[^a-zA-Z0-9]/g, '-'));
@@ -142,7 +161,7 @@ assert.match(MA.run('pi', 'start'), /pushed 1 file/);
   fs.rmSync(path.join(pd, man.parts[1]));
   MB.run('claude', 'pull');
   assert(!fs.existsSync(path.join(claudeDir(MB), 'big.jsonl')), 'incomplete parts are skipped');
-  fs.rmSync(t, { recursive: true });
+  fs.rmSync(t, { recursive: true, maxRetries: 5, retryDelay: 200 });
 
   await gitHooksTest();
   setupTest();
@@ -212,7 +231,7 @@ async function gitHooksTest() {
 
   execFileSync(process.execPath, [path.join(__dirname, 'sync.js'), 'uninstall-git-hooks'], { env: A.env });
   assert.throws(() => execFileSync('git', ['config', '--global', '--get', 'core.hooksPath'], { env: A.env, stdio: 'ignore' }), 'uninstall unsets hooksPath');
-  fs.rmSync(g, { recursive: true, force: true });
+  fs.rmSync(g, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 }
 
 
@@ -271,5 +290,5 @@ function setupTest() {
   C.setup('--repo', P);
   assert.strictEqual(fs.readFileSync(f, 'utf8'), LF, 'byte-exact after upgrade');
   assert.strictEqual(fs.statSync(f).mtimeMs, old.getTime(), 'mtime kept');
-  fs.rmSync(g, { recursive: true, force: true });
+  fs.rmSync(g, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 }

@@ -22,6 +22,7 @@ Run that one command on every machine and you're done. Projects are matched by t
 
 - [Supported agents](#supported-agents)
 - [Setup](#setup)
+- [Updating](#updating)
 - [Personal and work accounts](#personal-and-work-accounts)
 - [How it works](#how-it-works)
 - [Resuming a session on another machine](#resuming-a-session-on-another-machine)
@@ -81,7 +82,7 @@ Git push/pull sync: on
 ```
 
 That one command does three things:
-1. **Connects your memory repo.** It finds the repo on the account you picked, or creates it as **private**. With no GitHub CLI, it asks for a repo URL instead; press Enter there to use Google Drive.
+1. **Connects your memory repo.** It finds the repo on the account you picked, or creates it as **private**. Existing GitHub repositories are checked for private visibility too. With no GitHub CLI, press Enter at the repo URL prompt to use Google Drive.
 2. **Installs the plugin** into every coding agent it finds: Claude Code, Codex, Copilot CLI and Pi.
 3. **Turns on sync for `git push` / `git pull` / `git clone`**, for every repo on the machine.
 
@@ -103,6 +104,22 @@ That one command does three things:
 
 Then write `~/.mem-mastero.json` yourself (see [Config file](#config-file)) and, optionally, run `npx github:Shaf2665/mem-mastero install-git-hooks`.
 </details>
+
+## Updating
+
+Run this on every machine to update an existing installation:
+
+```bash
+npx --yes github:Shaf2665/mem-mastero update
+```
+
+The updater downloads the latest code from `main`, updates mem-mastero in your installed agents, and refreshes its Git-hook script if Git sync is enabled. Your memory stores, project rules, and sessions stay in place. Restart running agents after updating; Codex may ask you to trust updated hooks under `/hooks`.
+
+After installing v0.9.0 or later, you can also run `node ~/.mem-mastero/sync.js update` when Git sync is installed, or `mem-mastero update` when the command is on your PATH. Claude Code and Copilot CLI also expose `/mem-mastero:update`.
+
+If one agent fails to update, the other updates still run and the command reports the failure. Fix the reported issue and run it again. Updating does not install mem-mastero into agents that do not already have it.
+
+Disabled Codex installations are left disabled and skipped. Pi updates cover its global package list; project-local Pi packages still use Pi's own update command from that project.
 
 ## Personal and work accounts
 
@@ -158,10 +175,12 @@ pi/projects/<host>/<owner>/<repo>/         Pi       (<timestamp>_<id>.jsonl)
 mem-mastero.json                           which projects this store holds
 ```
 
-- **Newest copy wins**, file by file. If two machines change the same file between syncs, the one that syncs last wins.
+- **Newer file contents are copied**, even for edits less than two seconds apart. Equal timestamps with different contents are reported as a conflict and both copies are kept. Git-backed concurrent edits still use the last sync's conflicting changes.
 - **Files are synced byte for byte.** No line-ending conversion, even with Git for Windows' `autocrlf`.
+- **Interrupted writes keep the previous copy.** Replacements are written to temporary files before publication; split manifests are published only after their parts are complete.
+- **Overlapping hooks on one machine are serialized** for both Git and folder stores. Locks stay local and are not uploaded.
 - **Claude memory updates arrive immediately.** If Claude's `MEMORY.md` changed on another device, the fresh copy is handed to the new session at startup.
-- **A failing sync never blocks your agent or your `git` command.** You get one line of explanation, and the next sync catches up.
+- **Sync errors do not fail your agent or `git` command.** Uploads are retried on the next push event even if no file changed. `status` shows the last recorded background upload failure until a successful retry.
 - **No dependencies:** one Node script and git.
 
 ### Big sessions (over 100 MB)
@@ -171,13 +190,13 @@ GitHub rejects files over 100 MB, and long sessions grow past that. In the memor
 ```
 <session>.jsonl.parts/
   manifest.json        original name, size, SHA-256, part order
-  part-001.jsonl
-  part-002.jsonl
+  part-<generation>-001.jsonl
+  part-<generation>-002.jsonl
 ```
 
 - **Your agent always sees the whole session.** On pull, the parts are joined back into the original file, byte for byte, where the agent expects it.
 - **Nothing half-synced is used.** The rebuilt file must match the SHA-256. If a part is missing, the session is skipped and retried later.
-- **Parts are cut at line ends,** so each part is valid JSONL you can read on its own.
+- **Parts are cut at line ends where possible.** A single line larger than the part limit must span parts; reconstruction still preserves the exact original bytes.
 
 ## Resuming a session on another machine
 
@@ -193,6 +212,8 @@ Pull first: `git pull`, or start a new agent session in the repo. The session is
 ## Security and privacy
 
 - **Transcripts can contain anything** you pasted or a tool printed, including code, customer data and secrets. Store them only in a **private** repo, or a Drive you control.
+- **GitHub stores require authenticated GitHub CLI and an online privacy check,** including stores configured before v0.9.0. Public or unverifiable GitHub targets are refused. Local Git repositories remain supported; other remote Git hosts are refused because their visibility cannot be verified.
+- **Invalid configuration stops sync.** A malformed or unreadable configuration never falls back to another store. A missing configuration still allows legacy Drive autodetection.
 - **Work projects belong in a work store.** Use [`for` rules](#personal-and-work-accounts) so company memory never goes to a personal account, and check your employer's policy on where transcripts may be stored.
 - **mem-mastero stores no tokens or passwords.** Sign-in is handled by GitHub CLI and Git Credential Manager.
 - **Some files never leave your machine:** agent lock files (`*.lock`, `*.hold`) and anything outside a repo's own session folders.
@@ -205,6 +226,7 @@ Everything is available through `npx github:Shaf2665/mem-mastero <command>`. Aft
 | Command | What it does |
 |---|---|
 | `setup` | Connect this machine: create or reconnect a memory repo, install the plugin into your agents, turn on git sync |
+| `update` | Download the latest code, update existing agent plugins, and refresh enabled Git sync while keeping your configuration |
 | `status` | Show your stores, where the current repo's memory goes, and whether git sync is on |
 | `install-git-hooks` / `uninstall-git-hooks` | Turn sync on `git push` / `pull` / `clone` on or off |
 | `<agent> start` \| `push` \| `pull` | Sync one repo now, for `claude`, `codex`, `copilot` or `pi` (run inside the repo) |
@@ -256,6 +278,10 @@ Environment variables:
 | Codex sessions don't sync | Open `/hooks` in Codex and trust mem-mastero. |
 | A session from another machine doesn't show in Codex | Use `codex resume --all`. |
 | `global core.hooksPath is already …` | Another tool owns git's global hooks. mem-mastero leaves it alone; agent sync still works. |
+| `cannot verify … is private` | Sign in to GitHub CLI with access to that private memory repo and retry when online. |
+| `invalid … configuration` | Repair `~/.mem-mastero.json`; sync stays stopped to protect your routing rules. |
+| `conflicting contents have the same timestamp` | Compare both files named in the message, keep the wanted contents, then save that copy to give it a newer timestamp and sync again. |
+| `stale lock recovery guard` | Stop all mem-mastero sync processes, remove only the `.recover` file named in the error, then retry. Recovery never steals a guard from another process. |
 | Want to see what a hook received | Set `MEM_MASTERO_LOG=/path/to/log.jsonl` and start your agent. |
 
 **Known limits:**
@@ -292,9 +318,11 @@ Add the agent's manifest and hooks file, add a case to [`test.js`](test.js), and
 ```bash
 git clone https://github.com/Shaf2665/mem-mastero.git
 cd mem-mastero
-node test.js                 # unit + end-to-end tests: two machines, git hooks, setup, routing
+npm test                     # isolated unit + end-to-end tests, including failure recovery and updater
 claude plugin validate .
 ```
+
+CI runs the suite on Windows, Linux, and macOS. Tests use temporary homes, local bare repositories, and mocked remote APIs; they do not update installed agents or contact your memory stores.
 
 ## License
 

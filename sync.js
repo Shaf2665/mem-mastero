@@ -6,11 +6,9 @@ const os = require('os');
 const path = require('path');
 const { execFileSync, spawn, spawnSync } = require('child_process');
 
-const SLACK_MS = 2000; // Drive rounds mtimes; anything within 2s counts as "same"
-
 // --- Big files: GitHub rejects files over 100 MB, so in the synced folder a big session X is stored as
-// X.parts/manifest.json + X.parts/part-001.jsonl, ... Parts are cut at line ends, so each one is valid JSONL
-// that agents and humans can read on its own. Agents never see parts: pulling rebuilds the original X.
+// X.parts/manifest.json + generation-specific parts. Split at line ends when a line fits in one part.
+// Agents never see parts: pulling verifies and rebuilds the original X.
 const PART_BYTES = Number(process.env.MEM_MASTERO_PART_BYTES) || 45 * 1024 * 1024; // under GitHub's 50 MB warning
 const partsDir = p => p + '.parts';
 const manifestOf = p => path.join(partsDir(p), 'manifest.json');
@@ -20,32 +18,62 @@ function manifestTime(p) {
   try { return fs.statSync(manifestOf(p)).mtimeMs; } catch { return -Infinity; }
 }
 function mtimeOf(p) {
-  try { return fs.statSync(p).mtimeMs; } catch { return manifestTime(p); }
+  let whole = -Infinity;
+  try { whole = fs.statSync(p).mtimeMs; } catch {}
+  return Math.max(whole, manifestTime(p));
 }
 
-// ponytail: whole file in memory; stream it if sessions reach GBs.
-function writeParts(d, buf) {
-  fs.rmSync(d, { force: true });
-  fs.rmSync(partsDir(d), { recursive: true, force: true });
+// Keep the last good file until its complete replacement is ready.
+function atomicWrite(file, bytes, mtime) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = path.join(path.dirname(file), `.mem-mastero-${require('crypto').randomUUID()}.tmp`);
+  let mode = 0o600;
+  try { mode = fs.statSync(file).mode & 0o777; } catch (e) { if (e.code !== 'ENOENT') throw e; }
+  try {
+    fs.writeFileSync(tmp, bytes, { flag: 'wx', mode });
+    fs.chmodSync(tmp, mode);
+    if (mtime !== undefined) fs.utimesSync(tmp, new Date(), new Date(mtime));
+    fs.renameSync(tmp, file);
+  } finally { fs.rmSync(tmp, { force: true }); }
+}
+
+// shortcut: whole file in memory; stream it if sessions reach GBs.
+function writeParts(d, buf, mtime) {
   fs.mkdirSync(partsDir(d), { recursive: true });
+  let old = [];
+  try {
+    const previous = JSON.parse(fs.readFileSync(manifestOf(d), 'utf8')).parts;
+    if (Array.isArray(previous)) old = previous.filter(name => typeof name === 'string' && /^part-[^/\\]+$/.test(name));
+  } catch {}
+  const generation = require('crypto').randomUUID();
   const parts = [];
-  for (let start = 0; start < buf.length;) {
-    let end = Math.min(start + PART_BYTES, buf.length);
-    if (end < buf.length) { const nl = buf.lastIndexOf(0x0a, end - 1); if (nl >= start) end = nl + 1; } // a single line longer than a part gets cut mid-line
-    const name = `part-${String(parts.length + 1).padStart(3, '0')}${path.extname(d)}`;
-    fs.writeFileSync(path.join(partsDir(d), name), buf.subarray(start, end));
-    parts.push(name);
-    start = end;
+  let published = false;
+  try {
+    for (let start = 0; start < buf.length;) {
+      let end = Math.min(start + PART_BYTES, buf.length);
+      if (end < buf.length) { const nl = buf.lastIndexOf(0x0a, end - 1); if (nl >= start) end = nl + 1; } // a single line longer than a part gets cut mid-line
+      const name = `part-${generation}-${String(parts.length + 1).padStart(3, '0')}${path.extname(d)}`;
+      parts.push(name);
+      fs.writeFileSync(path.join(partsDir(d), name), buf.subarray(start, end), { flag: 'wx', mode: 0o600 });
+      start = end;
+    }
+    atomicWrite(manifestOf(d), JSON.stringify({
+      note: 'Split by mem-mastero to stay under GitHub\'s 100 MB file limit. Concatenate the parts in order to rebuild the original file.',
+      file: path.basename(d), bytes: buf.length, sha256: sha256(buf), parts,
+    }, null, 2) + '\n', mtime);
+    published = true;
+    fs.rmSync(d, { force: true });
+  } finally {
+    // Only remove this writer's old generation; another writer may be preparing its own parts.
+    for (const name of published ? old : parts) {
+      try { fs.rmSync(path.join(partsDir(d), path.basename(name)), { force: true }); } catch {}
+    }
   }
-  fs.writeFileSync(manifestOf(d), JSON.stringify({
-    note: 'Split by mem-mastero to stay under GitHub\'s 100 MB file limit. Concatenate the parts in order to rebuild the original file.',
-    file: path.basename(d), bytes: buf.length, sha256: sha256(buf), parts,
-  }, null, 2) + '\n');
 }
 
 // The original bytes of p, rebuilt from parts if needed. null if parts are missing or don't match (half-synced).
 function readWhole(p) {
-  if (fs.existsSync(p)) return fs.readFileSync(p);
+  if (fs.existsSync(p) && fs.statSync(p).mtimeMs >= manifestTime(p)) return fs.readFileSync(p);
   try {
     const m = JSON.parse(fs.readFileSync(manifestOf(p), 'utf8'));
     const buf = Buffer.concat(m.parts.map(f => fs.readFileSync(path.join(partsDir(p), path.basename(f)))));
@@ -53,24 +81,24 @@ function readWhole(p) {
   } catch { return null; }
 }
 
-// Copy s -> d if d is missing or older. Keeps s's mtime on d so the next run sees "same", not "newer".
+// Copy newer contents; matching timestamps alone do not prove that bytes are unchanged.
 // toRemote: d is in the synced folder, so files over PART_BYTES are stored as parts.
 function syncFile(s, d, toRemote = true) {
   const sm = mtimeOf(s);
   if (sm === -Infinity) return false;
   const split = toRemote && fs.existsSync(s) && fs.statSync(s).size > PART_BYTES;
-  // Split: compare against the parts only, so an old whole copy of d (e.g. git-ignored) still gets converted.
-  const dm = split ? manifestTime(d) : mtimeOf(d);
-  if (sm <= dm + SLACK_MS) return false;
-  fs.mkdirSync(path.dirname(d), { recursive: true });
-  if (split) {
-    writeParts(d, fs.readFileSync(s));
-    fs.utimesSync(manifestOf(d), new Date(), new Date(sm));
-  } else {
-    if (fs.existsSync(s)) fs.copyFileSync(s, d);
-    else { const buf = readWhole(s); if (!buf) return false; fs.writeFileSync(d, buf); }
+  const dm = mtimeOf(d);
+  if (sm < dm) return false;
+  const buf = readWhole(s);
+  if (!buf) return false;
+  const existing = readWhole(d);
+  const same = existing && buf.equals(existing);
+  if (same && !(split && fs.existsSync(d))) return false;
+  if (existing && !same && sm === dm) throw new Error(`conflicting contents have the same timestamp: ${s} and ${d}; both copies were kept`);
+  if (split) writeParts(d, buf, sm);
+  else {
+    atomicWrite(d, buf, sm);
     if (fs.existsSync(partsDir(d))) fs.rmSync(partsDir(d), { recursive: true, force: true });
-    fs.utimesSync(d, new Date(), new Date(sm));
   }
   return true;
 }
@@ -83,9 +111,9 @@ function walk(dir, rel = '', out = []) {
   try { entries = fs.readdirSync(path.join(dir, rel), { withFileTypes: true }); } catch { return out; }
   for (const e of entries) {
     const r = path.join(rel, e.name);
-    if (LOCAL_ONLY.test(e.name)) continue;
-    if (e.isDirectory() && e.name.endsWith('.parts') && fs.existsSync(path.join(dir, r, 'manifest.json'))) {
-      if (!fs.existsSync(path.join(dir, r.slice(0, -6)))) out.push(r.slice(0, -6));
+    if (LOCAL_ONLY.test(e.name) || /^\.mem-mastero-.*\.tmp$/.test(e.name)) continue;
+    if (e.isDirectory() && e.name.endsWith('.parts')) {
+      if (fs.existsSync(path.join(dir, r, 'manifest.json')) && !fs.existsSync(path.join(dir, r.slice(0, -6)))) out.push(r.slice(0, -6));
     } else if (e.isDirectory()) walk(dir, r, out); else if (e.isFile()) out.push(r);
   }
   return out;
@@ -170,8 +198,9 @@ const AGENTS = {
     local: () => path.join(home('CODEX_HOME', '.codex'), 'sessions'),
     push(c) {
       const current = c.mode === 'push' && c.input.transcript_path && path.relative(c.local, c.input.transcript_path);
+      const imported = inside(current) ? null : new Set(walk(c.remote));
       const files = inside(current) ? [current] // per turn: just this session
-        : walk(c.local).filter(r => r.endsWith('.jsonl') && repoId(headCwd(path.join(c.local, r))) === c.id);
+        : walk(c.local).filter(r => r.endsWith('.jsonl') && (imported.has(r) || repoId(headCwd(path.join(c.local, r))) === c.id));
       return files.filter(r => syncFile(path.join(c.local, r), path.join(c.remote, r)));
     },
   },
@@ -182,8 +211,9 @@ const AGENTS = {
     push(c) {
       const sid = c.input.sessionId || c.input.session_id;
       let dirs = [];
+      const imported = c.mode === 'push' && sid ? null : new Set(walk(c.remote).map(r => r.split(path.sep)[0]));
       if (c.mode === 'push' && sid) dirs = [sid];
-      else try { dirs = fs.readdirSync(c.local).filter(d => repoId(copilotCwd(path.join(c.local, d))) === c.id); } catch {}
+      else try { dirs = fs.readdirSync(c.local).filter(d => imported.has(d) || repoId(copilotCwd(path.join(c.local, d))) === c.id); } catch {}
       return dirs.filter(inside).flatMap(d => syncDir(path.join(c.local, d), path.join(c.remote, d)).map(r => path.join(d, r)));
     },
   },
@@ -197,8 +227,10 @@ const AGENTS = {
     push(c) {
       const root = path.dirname(c.local);
       const current = c.mode === 'push' && c.input.transcript_path && path.relative(root, c.input.transcript_path);
+      const imported = inside(current) ? null : new Set(walk(c.remote));
       const files = inside(current) ? [current]
-        : walk(root).filter(r => r.endsWith('.jsonl') && repoId(headCwd(path.join(root, r))) === c.id);
+        : walk(root).filter(r => r.endsWith('.jsonl') && (
+          (path.dirname(path.join(root, r)) === c.local && imported.has(path.basename(r))) || repoId(headCwd(path.join(root, r))) === c.id));
       return files.filter(r => syncFile(path.join(root, r), path.join(c.remote, path.basename(r)))).map(r => path.basename(r));
     },
   },
@@ -206,7 +238,16 @@ const AGENTS = {
 
 const CONFIG = () => path.join(os.homedir(), '.mem-mastero.json');
 function readConfig() {
-  try { return JSON.parse(fs.readFileSync(CONFIG(), 'utf8')); } catch { return {}; }
+  let text;
+  try { text = fs.readFileSync(CONFIG(), 'utf8'); }
+  catch (e) {
+    if (e.code === 'ENOENT') return {};
+    throw new Error(`cannot read ${CONFIG()}; sync stopped to preserve your store routing`);
+  }
+  let cfg;
+  try { cfg = JSON.parse(text); } catch { throw new Error(`invalid JSON in ${CONFIG()}; sync stopped to preserve your store routing`); }
+  storesOf(cfg);
+  return cfg;
 }
 
 // --- Stores: where memory goes. ~/.mem-mastero.json
@@ -216,7 +257,18 @@ function readConfig() {
 // every other project. No match and no catch-all store: the project isn't synced (e.g. a work-only laptop).
 // Legacy configs {"github": url} / {"dir": path} / {} (Drive) are one catch-all store.
 function storesOf(cfg) {
-  if (Array.isArray(cfg.stores)) return cfg.stores;
+  const object = value => value && typeof value === 'object' && !Array.isArray(value);
+  const nonempty = value => typeof value === 'string' && value.trim().length > 0;
+  const validStore = s => object(s) && Object.keys(s).every(k => ['github', 'dir', 'for'].includes(k))
+    && !(s.github !== undefined && s.dir !== undefined)
+    && (s.github === undefined || nonempty(s.github)) && (s.dir === undefined || nonempty(s.dir))
+    && (s.for === undefined || (Array.isArray(s.for) && s.for.every(nonempty)));
+  if (!object(cfg) || Object.keys(cfg).some(k => !['stores', 'github', 'dir'].includes(k))
+    || (cfg.stores !== undefined && (cfg.github !== undefined || cfg.dir !== undefined))
+    || (cfg.stores !== undefined ? !Array.isArray(cfg.stores) || !cfg.stores.every(validStore) : !validStore(cfg))) {
+    throw new Error(`invalid store configuration in ${CONFIG()}; sync stopped to preserve your store routing`);
+  }
+  if (cfg.stores !== undefined) return cfg.stores;
   return [cfg.github ? { github: cfg.github } : { dir: cfg.dir }];
 }
 
@@ -235,10 +287,52 @@ function pickStore(cfg, id) {
 
 const storeName = s => s.github ? normalizeRemote(s.github) : (s.dir || 'Google Drive');
 
+const privateStores = new Set();
+const GITHUB_ACCOUNT = /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/;
+function ensurePrivateStore(store) {
+  if (!store.github) return;
+  const url = store.github;
+  if (path.isAbsolute(url) || /^\.{1,2}[\\/]/.test(url) || /^file:\/\//i.test(url)) return;
+  const id = normalizeRemote(url);
+  if (!/^github\.com\/[\w.-]+\/[\w.-]+$/.test(id)) {
+    throw new Error('cannot verify this memory repository is private; use a private github.com repository or a local Git repository');
+  }
+  if (privateStores.has(url)) return;
+  const env = { ...process.env };
+  let account;
+  if (/^https?:\/\//i.test(url)) {
+    const parsed = new URL(url);
+    if (parsed.password) throw new Error('memory repository URLs must not contain a password or token; use GitHub CLI authentication');
+    account = decodeURIComponent(parsed.username);
+  }
+  if (account) {
+    if (!GITHUB_ACCOUNT.test(account)) throw new Error('invalid GitHub account name in memory repository URL');
+    const auth = sh('gh', ['auth', 'token', '--hostname', 'github.com', '--user', account], { timeout: 15000 });
+    if (auth.status !== 0 || !auth.stdout?.trim()) throw new Error('sign in to GitHub CLI with the account named in your memory repository URL to verify it is private');
+    env.GH_TOKEN = auth.stdout.trim();
+  }
+  const result = sh('gh', ['api', '--hostname', 'github.com', `repos/${id.slice('github.com/'.length)}`], { env, timeout: 15000 });
+  let repo;
+  try { repo = JSON.parse(result.stdout); } catch {}
+  if (result.status !== 0 || typeof repo?.private !== 'boolean') {
+    throw new Error(`cannot verify ${id} is private; sync stopped. Sign in with gh auth login and retry when online`);
+  }
+  if (!repo.private) throw new Error(`refusing public memory repository ${id}; transcripts require a private repository`);
+  privateStores.add(url);
+}
+
 // Local folder holding a store's files: a clone of its repo, or the Drive/dir folder.
 function storeRoot(s, { clone = true } = {}) {
   if (!s.github) return s.dir || driveRoot({});
+  ensurePrivateStore(s);
   const dir = cloneDir(s.github);
+  if (fs.existsSync(path.join(dir, '.git'))) {
+    let actual;
+    try { actual = git(dir, 'remote', 'get-url', 'origin').trim(); }
+    catch { throw new Error('cannot verify the memory clone origin; sync stopped before copying files'); }
+    const identity = url => normalizeRemote(path.isAbsolute(url) || /^\.{1,2}[\\/]/.test(url) ? path.resolve(url) : url);
+    if (identity(actual) !== identity(s.github)) throw new Error('memory clone origin does not match its configured store; sync stopped before copying files');
+  }
   if (clone && !fs.existsSync(path.join(dir, '.git'))) {
     fs.mkdirSync(path.dirname(dir), { recursive: true });
     execFileSync('git', ['clone', '-q', '-c', 'core.autocrlf=false', s.github, dir], { stdio: 'ignore', env: GIT_ENV() });
@@ -280,14 +374,45 @@ const git = (dir, ...args) => execFileSync('git', ['-C', dir, '-c', 'user.name=m
   encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: GIT_ENV(),
 });
 
-// One sync at a time per clone: agent hooks, git hooks and background pushes can overlap,
-// and a second pullPush would abort the first one's rebase. Waits up to 30s; a lock older than 2 min is stale.
-function withLock(dir, fn) {
-  const lock = path.join(dir, '.git', 'mem-mastero.lock');
-  for (let waited = 0; ; waited += 250) {
-    try { fs.closeSync(fs.openSync(lock, 'wx')); break; } catch {}
-    try { if (Date.now() - fs.statSync(lock).mtimeMs > 120000) { fs.rmSync(lock, { force: true }); continue; } } catch { continue; }
-    if (waited >= 30000) return false;
+// Serialize overlapping hooks. An old lock is recoverable only when its owner is gone.
+function withLock(dir, fn, lock = path.join(dir, '.git', 'mem-mastero.lock')) {
+  const deadline = Date.now() + 30000;
+  for (;;) {
+    try {
+      const fd = fs.openSync(lock, 'wx');
+      let ready = false;
+      try { fs.writeFileSync(fd, String(process.pid)); ready = true; }
+      finally { fs.closeSync(fd); if (!ready) fs.rmSync(lock, { force: true }); }
+      break;
+    } catch (e) { if (e.code !== 'EEXIST') throw e; }
+    if (Date.now() >= deadline) return false;
+    try {
+      if (Date.now() - fs.statSync(lock).mtimeMs > 120000) {
+        const guard = lock + '.recover';
+        let fd;
+        try { fd = fs.openSync(guard, 'wx'); }
+        catch (e) {
+          if (e.code !== 'EEXIST') throw e;
+          if (Date.now() - fs.statSync(guard).mtimeMs > 120000) {
+            throw new Error(`stale lock recovery guard: ${guard}; stop all mem-mastero sync processes before removing this file and retrying`);
+          }
+        }
+        if (fd !== undefined) {
+          try {
+            // Another waiter may have replaced the stale lock before we acquired the recovery guard.
+            if (Date.now() - fs.statSync(lock).mtimeMs > 120000) {
+              const pid = Number(fs.readFileSync(lock, 'utf8'));
+              let alive = false;
+              if (Number.isInteger(pid) && pid > 0) {
+                try { process.kill(pid, 0); alive = true; } catch (e) { if (e.code !== 'ESRCH') alive = true; }
+              }
+              if (!alive) { fs.rmSync(lock, { force: true }); continue; }
+            }
+          } finally { fs.closeSync(fd); fs.rmSync(guard, { force: true }); }
+        }
+      }
+    }
+    catch (e) { if (e.code !== 'ENOENT') throw e; }
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
   }
   try { fn(); return true; } finally { fs.rmSync(lock, { force: true }); }
@@ -309,15 +434,26 @@ function exactEol(dir) {
 
 function commit(dir) {
   git(dir, 'add', '-A');
-  try { git(dir, 'commit', '-q', '-m', `mem-mastero: ${os.hostname()}`); } catch {} // nothing to commit
+  if (git(dir, 'diff', '--cached', '--name-only').trim()) git(dir, 'commit', '-q', '-m', `mem-mastero: ${os.hostname()}`);
 }
 
 // Same file edited on two machines: -X theirs keeps the commit being replayed, i.e. this machine's copy.
 function pullPush(dir) {
-  try { git(dir, 'pull', '-q', '--rebase', '-X', 'theirs'); } catch { // empty remote, offline, or unresolvable rebase
-    try { git(dir, 'rebase', '--abort'); } catch {}
+  const errorFile = path.join(dir, '.git', 'mem-mastero-error');
+  try {
+    ensurePrivateStore({ github: git(dir, 'remote', 'get-url', 'origin').trim() });
+    for (const url of git(dir, 'remote', 'get-url', '--push', '--all', 'origin').trim().split(/\r?\n/)) {
+      ensurePrivateStore({ github: url });
+    }
+    try { git(dir, 'pull', '-q', '--rebase', '-X', 'theirs'); } catch { // empty remote, offline, or unresolvable rebase
+      try { git(dir, 'rebase', '--abort'); } catch {}
+    }
+    git(dir, 'push', '-q', '-u', 'origin', 'HEAD');
+    fs.rmSync(errorFile, { force: true });
+  } catch (e) {
+    try { atomicWrite(errorFile, `${new Date().toISOString()} Upload failed; run a sync again to retry.\n`); } catch {}
+    throw e;
   }
-  git(dir, 'push', '-q', '-u', 'origin', 'HEAD'); // throws when offline/behind; the next sync retries
 }
 
 function readStdin() {
@@ -356,7 +492,7 @@ function run(names, mode, input, loud = mode === 'start') {
     if (github) {
       commit(root);
       if (mode === 'push') {
-        if (jobs.some(j => j.pushed.length)) spawn(process.execPath, [__filename, 'gitpush', root], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+        spawn(process.execPath, [__filename, 'gitpush', root], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
       } else pullPush(root); // git rewrites mtimes of files it updates, so they count as newer than local
     }
     for (const { name, c, pushed } of jobs) {
@@ -370,8 +506,14 @@ function run(names, mode, input, loud = mode === 'start') {
       }
     }
   };
-  if (!github) return work();
-  if (!withLock(root, work)) say('another sync is still running; skipped this one (the next sync catches up).');
+  let lock;
+  if (!github) {
+    const locks = path.join(BASE(), 'locks');
+    fs.mkdirSync(locks, { recursive: true });
+    const key = process.platform === 'win32' ? path.resolve(root).toLowerCase() : path.resolve(root);
+    lock = path.join(locks, sha256(Buffer.from(key)) + '.lock');
+  }
+  if (!withLock(root, work, lock)) say('another sync is still running; skipped this one (the next sync catches up).');
 }
 
 // --- Git hooks: sync with `git push` / `git pull` / `git clone` in every repo, for every agent.
@@ -389,8 +531,9 @@ const globalGit = (...args) => { try { return execFileSync('git', ['config', '--
 // Hooks call a stable copy of this script, so plugin updates (new cache paths) don't break them.
 function refreshHookScript() {
   const dst = path.join(BASE(), 'sync.js');
-  try { if (fs.readFileSync(dst, 'utf8') === fs.readFileSync(__filename, 'utf8')) return; } catch {}
-  fs.copyFileSync(__filename, dst);
+  const source = fs.readFileSync(__filename);
+  try { if (fs.readFileSync(dst).equals(source)) return; } catch {}
+  atomicWrite(dst, source);
 }
 
 function installGitHooks() {
@@ -475,12 +618,87 @@ function installAgents(say) {
   }
 }
 
+// Fetch first even when called from the stable Git-hook copy or an older plugin cache.
+function update(argv = []) {
+  if (argv.length && (argv.length !== 1 || argv[0] !== '--local')) throw new Error('Usage: mem-mastero update');
+  if (!argv.length) {
+    const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'mem-mastero-update-'));
+    try {
+      console.log('mem-mastero: downloading the latest version...');
+      execFileSync('git', ['clone', '--quiet', '--depth', '1', '--branch', 'main', `https://github.com/${PLUGIN}.git`, temp], { env: GIT_ENV(), stdio: ['ignore', 'ignore', 'pipe'] });
+      const result = spawnSync(process.execPath, [path.join(temp, 'sync.js'), 'update', '--local'], { stdio: 'inherit', windowsHide: true });
+      if (result.error || result.status !== 0) throw new Error(result.error?.message || 'Some updates failed; see the results above and run update again.');
+    } finally {
+      const resolved = path.resolve(temp), parent = path.resolve(os.tmpdir());
+      if (path.dirname(resolved) !== parent || !path.basename(resolved).startsWith('mem-mastero-update-')) throw new Error('Unexpected update cleanup path');
+      fs.rmSync(resolved, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
+    }
+    return;
+  }
+
+  const failures = [];
+  const call = (cli, args) => {
+    const result = sh(cli, args);
+    if (result.error || result.status !== 0) throw new Error(`${cli} ${args.join(' ')} failed${result.stderr?.trim() ? `: ${result.stderr.trim()}` : ''}`);
+    return result.stdout || '';
+  };
+  for (const cli of ['claude', 'codex', 'copilot', 'pi']) {
+    if (sh(cli, ['--version']).status !== 0) continue;
+    try {
+      if (cli === 'pi') {
+        const settings = path.join(process.env.PI_CODING_AGENT_DIR || path.join(os.homedir(), '.pi', 'agent'), 'settings.json');
+        let packages;
+        try { packages = JSON.parse(fs.readFileSync(settings, 'utf8')).packages || []; }
+        catch (e) { if (e.code !== 'ENOENT') throw e; packages = []; }
+        const sources = packages.map(p => typeof p === 'string' ? p : p?.source).filter(s => typeof s === 'string' && /^(?:git:github\.com\/|https:\/\/github\.com\/|git@github\.com:)shaf2665\/mem-mastero(?:\.git)?(?:@[\w./-]+)?$/i.test(s));
+        if (!sources.length) { console.log('  · pi: mem-mastero is not installed globally; skipped'); continue; }
+        for (const source of new Set(sources)) call(cli, ['update', source]);
+      } else {
+        const listed = JSON.parse(call(cli, ['plugin', 'list', '--json']));
+        const plugins = cli === 'codex' ? listed.installed : listed;
+        if (!Array.isArray(plugins)) throw new Error('Unexpected installed-plugin list; update the agent CLI first.');
+        const installed = plugins.filter(p => cli === 'claude' ? p.id === 'mem-mastero@mem-mastero'
+          : cli === 'codex' ? p.pluginId === 'mem-mastero@mem-mastero'
+            : p.name === 'mem-mastero' && (!p.marketplace || p.marketplace === 'mem-mastero'));
+        if (!installed.length) { console.log(`  · ${cli}: mem-mastero is not installed; skipped`); continue; }
+        // Codex's add command enables plugins; leave disabled installs untouched.
+        if (cli === 'codex' && installed[0].enabled === false) { console.log('  · codex: mem-mastero is disabled; enable it before updating'); continue; }
+        if (cli === 'claude') {
+          call(cli, ['plugin', 'marketplace', 'update', 'mem-mastero']);
+          for (const plugin of installed) {
+            if (plugin.scope && !['user', 'project', 'local', 'managed'].includes(plugin.scope)) throw new Error('Unknown Claude installation scope.');
+            call(cli, ['plugin', 'update', 'mem-mastero@mem-mastero', ...(plugin.scope ? ['--scope', plugin.scope] : [])]);
+          }
+        } else if (cli === 'codex') {
+          call(cli, ['plugin', 'marketplace', 'upgrade', 'mem-mastero']);
+          call(cli, ['plugin', 'add', 'mem-mastero@mem-mastero']);
+        } else {
+          for (const plugin of installed) call(cli, ['plugin', 'update', plugin.marketplace ? 'mem-mastero@mem-mastero' : 'mem-mastero']);
+        }
+      }
+      console.log(`  ✓ ${cli}: mem-mastero updated`);
+    } catch (e) {
+      failures.push(cli);
+      console.error(`  ✗ ${cli}: ${e.message}`);
+    }
+  }
+  const hooks = globalGit('--get', 'core.hooksPath');
+  if (hooks && path.resolve(hooks) === path.resolve(hooksDir())) {
+    try { refreshHookScript(); console.log('  ✓ Git-hook sync script updated'); }
+    catch (e) { failures.push('Git hooks'); console.error(`  ✗ Git hooks: ${e.message}`); }
+  }
+  console.log('Restart your coding agents to load updates. In Codex, review /hooks if trust is requested.');
+  if (failures.length) throw new Error(`Update failed for ${failures.join(', ')}. Other successful updates were kept; run update again to retry.`);
+}
+
 async function setup(argv) {
   const o = parseArgs(argv);
+  if (o.account !== undefined && (typeof o.account !== 'string' || !GITHUB_ACCOUNT.test(o.account))) throw new Error('invalid GitHub account name');
   const rl = process.stdin.isTTY && !o.yes ? require('readline/promises').createInterface({ input: process.stdin, output: process.stdout }) : null;
   const ask = async (q, def = '') => (rl ? (await rl.question(`${q}${def ? ` [${def}]` : ''}: `)).trim() : '') || def;
   const say = m => console.log(m);
   try {
+    const cfg = readConfig();
     // 1. Which store
     let store;
     if (o.drive || o.dir) store = o.dir ? { dir: o.dir } : {};
@@ -507,8 +725,11 @@ async function setup(argv) {
         const isUrl = /[:\\/]/.test(repo) && !/^[\w.-]+\/[\w.-]+$/.test(repo);
         if (!isUrl) { // owner/name on GitHub: find it, or create it private
           const env = { ...process.env };
-          const tok = account && sh('gh', ['auth', 'token', '--user', account]).stdout;
-          if (tok && tok.trim()) env.GH_TOKEN = tok.trim();
+          if (account) {
+            const auth = sh('gh', ['auth', 'token', '--hostname', 'github.com', '--user', account]);
+            if (auth.status !== 0 || !auth.stdout?.trim()) throw new Error('sign in to GitHub CLI with the selected account before connecting your memory repository');
+            env.GH_TOKEN = auth.stdout.trim();
+          }
           if (sh('gh', ['api', `repos/${repo}`, '--silent'], { env }).status === 0) say(`✓ Found ${repo}`);
           else if (o.yes || /^y/i.test(await ask(`${repo} doesn't exist. Create it as a private repo? (Y/n)`, 'Y'))) {
             const r = sh('gh', ['repo', 'create', repo, '--private', '--description', 'Coding-agent memory, synced by mem-mastero'], { env });
@@ -536,19 +757,28 @@ async function setup(argv) {
 
     // 3. Which projects go here: from --for, else the rules saved in the store, else ask once.
     const rulesFile = path.join(root, 'mem-mastero.json');
-    let saved; try { saved = JSON.parse(fs.readFileSync(rulesFile, 'utf8')).for; } catch {}
+    let saved;
+    try {
+      const rules = JSON.parse(fs.readFileSync(rulesFile, 'utf8'));
+      if (!rules || typeof rules !== 'object' || Array.isArray(rules)
+        || !(rules.for === null || (Array.isArray(rules.for) && rules.for.length && rules.for.every(p => typeof p === 'string' && p.trim())))) {
+        throw new Error('invalid project rules');
+      }
+      saved = rules.for;
+    } catch (e) {
+      if (e.code !== 'ENOENT') throw new Error(`invalid or unreadable project rules in ${rulesFile}; setup stopped to preserve your store routing`);
+    }
     let rules = o.for !== undefined ? o.for : saved !== undefined ? saved : await ask(
       'Which projects belong here? Enter = all projects (personal). For a work account give patterns, e.g. dev.azure.com/your-org/*, github.com/your-org');
     if (typeof rules === 'string') rules = rules.split(/[,\s]+/).filter(Boolean);
     if (!rules || !rules.length) rules = null;
     if (rules) store.for = rules;
     if (saved === undefined || JSON.stringify(saved) !== JSON.stringify(rules)) { // save, so other machines reconnect with no questions
-      fs.writeFileSync(rulesFile, JSON.stringify({ for: rules, note: 'Projects stored here (git remote patterns). null = all projects not claimed by another store.' }, null, 2) + '\n');
+      atomicWrite(rulesFile, JSON.stringify({ for: rules, note: 'Projects stored here (git remote patterns). null = all projects not claimed by another store.' }, null, 2) + '\n');
       if (store.github) withLock(root, () => { commit(root); pullPush(root); });
     }
 
     // 4. Save: replace this store if known; one catch-all at most; rule-based stores are checked first.
-    const cfg = readConfig();
     let stores = (cfg.stores || (cfg.github || cfg.dir ? storesOf(cfg) : [])).filter(s => storeName(s) !== storeName(store));
     if (!rules) {
       const old = stores.find(s => !s.for);
@@ -556,7 +786,7 @@ async function setup(argv) {
       stores = stores.filter(s => s.for);
     }
     stores = [...stores, store].sort((x, y) => !!y.for - !!x.for);
-    fs.writeFileSync(CONFIG(), JSON.stringify({ stores }, null, 2) + '\n');
+    atomicWrite(CONFIG(), JSON.stringify({ stores }, null, 2) + '\n');
 
     // 5. Agents + git hooks
     if (!o['no-agents']) { say('Plugin in your coding agents:'); installAgents(say); }
@@ -570,14 +800,17 @@ async function setup(argv) {
 function status() {
   const cfg = readConfig(), stores = storesOf(cfg);
   console.log('mem-mastero stores:');
-  for (const s of stores) console.log(`  • ${storeName(s)}  ←  ${s.for ? s.for.join(', ') : stores.length > 1 ? 'all other projects' : 'all projects'}`);
+  for (const s of stores) {
+    console.log(`  • ${storeName(s)}  ←  ${s.for ? s.for.join(', ') : stores.length > 1 ? 'all other projects' : 'all projects'}`);
+    if (s.github) try { console.log(`    ${fs.readFileSync(path.join(cloneDir(s.github), '.git', 'mem-mastero-error'), 'utf8').trim()}`); } catch {}
+  }
   const id = repoId(process.cwd());
   if (id) { const s = pickStore(cfg, id); console.log(`This repo (${id}) → ${s ? storeName(s) : 'not synced (matches no store)'}`); }
   const hooks = globalGit('--get', 'core.hooksPath');
   console.log(`Git push/pull sync: ${hooks && path.resolve(hooks) === path.resolve(hooksDir()) ? 'on' : 'off'}`);
 }
 
-module.exports = { syncDir, normalizeRemote, headCwd, AGENTS, matches, pickStore, storesOf };
+module.exports = { syncDir, syncFile, readWhole, atomicWrite, normalizeRemote, headCwd, AGENTS, matches, pickStore, storesOf, withLock };
 
 // Git runs hooks with repo-local variables (GIT_DIR, GIT_INDEX_FILE, ...) pointing at the repo being pushed.
 // Inherited, they would aim every git call here, including commit/push of the memory repo, at *that* repo
@@ -593,10 +826,15 @@ if (require.main === module) {
     setup(process.argv.slice(3)).then(() => process.exit(0), e => { console.error(`mem-mastero setup: ${e.message}`); process.exit(1); });
     return;
   }
+  if (a === 'update') {
+    try { update(process.argv.slice(3)); } catch (e) { console.error(`mem-mastero update: ${e.message}`); process.exitCode = 1; }
+    return;
+  }
   try {
     if (a === 'status') status();
     else if (a === 'help' || (!a && process.stdin.isTTY)) console.log(`mem-mastero ${(() => { try { return require('./package.json').version; } catch { return ''; } })()}
   setup                  connect this machine (create or reconnect a memory repo, personal or work)
+  update                 update installed plugins and the Git-hook script; keep your stores
   status                 show your stores and where this repo's memory goes
   install-git-hooks      sync on git push / pull / clone      (uninstall-git-hooks to undo)
   <agent> start|push|pull  sync one repo now (agent: claude, codex, copilot, pi)`);

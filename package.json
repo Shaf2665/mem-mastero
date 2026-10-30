@@ -1,6 +1,6 @@
 {
   "name": "mem-mastero",
-  "version": "0.8.2",
+  "version": "0.9.0",
   "private": true,
   "description": "Sync coding-agent sessions and memory for each repo across machines via your Google Drive or a private GitHub repo.",
   "keywords": [
@@ -18,5 +18,8 @@
   },
   "bin": {
     "mem-mastero": "sync.js"
+  },
+  "scripts": {
+    "test": "node run-tests.js"
   }
 }
