@@ -47,7 +47,8 @@ function updater(options = {}) {
     console: { log: text => output.push(text), error: text => output.push(text) },
     refreshed: () => { calls.push(['refreshHookScript']); if (options.refreshFails) throw new Error('disk full'); },
   };
-  vm.runInNewContext('(function () {\n' + source.replace(/^#!.*\n/, '') + '\nrefreshHookScript = refreshed; module.exports = { update };\n})();', context);
+  const script = options.crlf ? source.replace(/\r?\n/g, '\r\n') : source;
+  vm.runInNewContext('(function () {\n' + script.replace(/^#![^\n]*\n/, '') + '\nrefreshHookScript = refreshed; module.exports = { update };\n})();', context);
   return { run: context.module.exports.update, calls, output, removed, temp };
 }
 
@@ -93,6 +94,7 @@ for (const options of [{}, { childStatus: 1 }, { cloneFails: true }]) {
 }
 
 assert.throws(() => updater().run(['--unknown']), /Usage:/);
+updater({ crlf: true }).run(['--local']); // Git for Windows may check the script out with CRLF.
 const invalid = require('child_process').spawnSync(process.execPath, [path.join(__dirname, 'sync.js'), 'update', '--unknown'], { encoding: 'utf8' });
 assert.strictEqual(invalid.status, 1, 'CLI reports updater errors with a failing exit code');
 assert.match(invalid.stderr, /Usage:/);
