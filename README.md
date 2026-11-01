@@ -2,9 +2,9 @@
 
 **Keep useful project knowledge, sync your coding-agent sessions, and safely archive old Claude history.**
 
-[![Watch the Mem-mastero explainer](site/demo-poster.jpg)](site/demo.mp4)
+[![Watch the Mem-mastero setup and usage walkthrough](site/demo-poster.jpg)](https://mem-mastero.vercel.app/#demo)
 
-<sub>[Watch the 65-second narrated demo](site/demo.mp4) · English captions included · [Video source](video/README.md)</sub>
+<sub>[Watch the 2:18 narrated walkthrough](https://mem-mastero.vercel.app/#demo) · English captions included · [MP4 file](https://raw.githubusercontent.com/Shaf2665/mem-mastero/main/site/demo.mp4) · [Video source](video/README.md)</sub>
 
 Claude Code, Codex, Copilot CLI and Pi keep your chat history and memory **on the machine where you worked**. Clone the same repo on another laptop and the agent starts from zero.
 

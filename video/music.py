@@ -1,11 +1,25 @@
 """Original minimal ambient music, synthesized locally; no samples or vocals."""
 from pathlib import Path
+import argparse
 import json
+import math
 import wave
 import numpy as np
 
-OUT = Path(__file__).resolve().parent
-SR, DURATION, BPM = 48000, 65.0, 88.0
+SOURCE = Path(__file__).resolve().parent
+OUT = SOURCE.parent / "brag-output" / "v3"
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("duration", nargs="?", type=float,
+                    help="Track duration in seconds; defaults to captions.json duration or 65.")
+args = parser.parse_args()
+duration = args.duration
+if duration is None:
+    metadata = json.loads((SOURCE / "captions.json").read_text(encoding="utf-8"))
+    duration = metadata.get("duration", 65.0)
+if not isinstance(duration, (int, float)) or not math.isfinite(duration) or duration < 1:
+    parser.error("duration must be a finite number of at least one second")
+OUT.mkdir(parents=True, exist_ok=True)
+SR, DURATION, BPM = 48000, float(duration), 88.0
 N = int(SR * DURATION)
 mix = np.zeros((N, 2), dtype=np.float64)
 beat = 60 / BPM
@@ -57,7 +71,7 @@ for i in range(int(np.ceil(DURATION / chord_length))):
 time = np.arange(N) / SR
 fade = np.minimum(1, time / 1.5) * np.minimum(1, (DURATION - time) / 3)
 mix *= fade[:, None]
-target_rms_db = -38.0
+target_rms_db = -32.0
 rms = np.sqrt(np.mean(mix * mix))
 mix *= 10 ** (target_rms_db / 20) / rms
 peak = float(np.max(np.abs(mix)))

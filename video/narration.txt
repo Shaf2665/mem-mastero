@@ -1,19 +1,23 @@
-Switch machines. Keep your coding history.
+Your coding conversations keep growing. Useful decisions get buried, and switching computers can mean losing context.
 
-Mem Maestro syncs your agent's original sessions and memory through a private GitHub repository or your Google Drive.
+Mem Maestro brings project memory, session sync, and safe Claude archives into one plugin.
 
-It follows the project's Git remote, even when the folder path changes.
+Start inside your project's Git repository. Run setup on each machine, then connect your own memory store. Sessions can sync through Google Drive or a private GitHub repository. Choose private GitHub if you want Claude session archiving.
 
-Start your agent to sync, or use the optional Git push and pull hooks.
+Already installed? Run update on every device before using this release's AI features. Restart your agent, and approve updated hooks if it asks.
 
-Claude Code, Codex, Copilot CLI, and Pi are supported, with Pi in beta.
+Next, choose the coding client you already use: Codex, Claude Code, or Copilot. Enable semantic search and automatic summaries. Mem Maestro uses that client's existing sign-in, without requesting a separate API key. Model calls use your account's allowance.
 
-Need more disk space? Measure what's stored, then preview old Claude sessions.
+As you work, supported hooks capture small assistant observations. Original sessions stay separate.
 
-Close Claude and archive the sessions you choose to your private GitHub repository.
+A background worker turns saved notes into concise summaries with source references. Those summaries are AI interpretations, so you can inspect the original notes.
 
-Mem Maestro uploads the archive, downloads it again, and verifies every file before removing local copies. Existing Git clones and history stay in place.
+Ask a question in your own words. Hybrid search combines keywords with AI ranking. Open a returned memory ID to read the details. Results show how much was searched; this does not scan every archived conversation.
 
-Need that conversation again? Restore the original session, then resume in Claude.
+To reclaim native Claude storage, first measure usage and preview an archive.
 
-Set up Mem Maestro on each machine. Your history follows your project. Old sessions stay recoverable.
+Close all Claude processes, then archive a selected inactive session. Local files are removed only after the cloud snapshot is downloaded and verified.
+
+Small graph nodes keep references to archived sessions. When older history is needed, recall downloads the selected archive, verifies it, reads the requested portion, and removes the temporary copy.
+
+Your useful knowledge stays searchable. Your history stays recoverable. Your storage stays under your control.

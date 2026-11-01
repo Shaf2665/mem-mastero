@@ -1,121 +1,176 @@
 {
-  "playbackRate": 1.08,
+  "duration": 137.5,
+  "playbackRate": 1,
   "leadSeconds": 0.65,
+  "sceneStarts": [
+    0,
+    8.13,
+    15.11,
+    30.63,
+    42.33,
+    62.13,
+    69.63,
+    80.71,
+    96.67,
+    102.71,
+    113.03,
+    127.67
+  ],
   "cues": [
     {
       "start": 0.65,
-      "end": 1.756,
-      "text": "Switch machines."
+      "end": 2.71,
+      "text": "Your coding conversations keep growing."
     },
     {
-      "start": 2.271,
-      "end": 3.43,
-      "text": "Keep your coding history."
+      "start": 3.17,
+      "end": 7.27,
+      "text": "Useful decisions get buried, and switching computers can mean losing context."
     },
     {
-      "start": 4.347,
-      "end": 7.94,
-      "text": "Mem Maestro syncs your agent's original sessions and memory"
+      "start": 8.13,
+      "end": 14.45,
+      "text": "Mem Maestro brings project memory, session sync, and safe Claude archives into one plugin."
     },
     {
-      "start": 7.94,
-      "end": 11.729,
-      "text": "through a private GitHub repository or your Google Drive."
+      "start": 15.11,
+      "end": 17.71,
+      "text": "Start inside your project's Git repository."
     },
     {
-      "start": 12.19,
-      "end": 14.125,
-      "text": "It follows the project's Git remote,"
+      "start": 18.21,
+      "end": 22.1,
+      "text": "Run setup on each machine, then connect your own memory store."
     },
     {
-      "start": 14.431,
-      "end": 15.983,
-      "text": "even when the folder path changes."
+      "start": 22.1,
+      "end": 27.01,
+      "text": "Sessions can sync through Google Drive or a private GitHub repository."
     },
     {
-      "start": 16.481,
-      "end": 18.026,
-      "text": "Start your agent to sync,"
+      "start": 27.73,
+      "end": 30.61,
+      "text": "Choose private GitHub if you want Claude session archiving."
     },
     {
-      "start": 18.351,
-      "end": 21.236,
-      "text": "or use the optional Git push and pull hooks."
+      "start": 30.63,
+      "end": 32.45,
+      "text": "Already installed?"
     },
     {
-      "start": 21.783,
-      "end": 26.996,
-      "text": "Claude Code, Codex, Copilot CLI, and Pi are supported,"
+      "start": 32.91,
+      "end": 37.45,
+      "text": "Run update on every device before using this release's AI features."
     },
     {
-      "start": 27.172,
-      "end": 27.991,
-      "text": "with Pi in beta."
+      "start": 38.29,
+      "end": 41.79,
+      "text": "Restart your agent, and approve updated hooks if it asks."
     },
     {
-      "start": 28.506,
-      "end": 29.609,
-      "text": "Need more disk space?"
+      "start": 42.33,
+      "end": 49.47,
+      "text": "Next, choose the coding client you already use: Codex, Claude Code, or Copilot."
     },
     {
-      "start": 30.065,
-      "end": 33.586,
-      "text": "Measure what's stored, then preview old Claude sessions."
+      "start": 50.13,
+      "end": 52.79,
+      "text": "Enable semantic search and automatic summaries."
     },
     {
-      "start": 33.984,
-      "end": 36.725,
-      "text": "Close Claude and archive the sessions you choose"
+      "start": 53.47,
+      "end": 58.98,
+      "text": "Mem Maestro uses that client's existing sign-in, without requesting a separate API key."
     },
     {
-      "start": 36.725,
-      "end": 39.002,
-      "text": "to your private GitHub repository."
+      "start": 58.98,
+      "end": 61.57,
+      "text": "Model calls use your account's allowance."
     },
     {
-      "start": 39.526,
-      "end": 41.553,
-      "text": "Mem Maestro uploads the archive,"
+      "start": 62.13,
+      "end": 66.21,
+      "text": "As you work, supported hooks capture small assistant observations."
     },
     {
-      "start": 41.989,
-      "end": 44.433,
-      "text": "downloads it again, and verifies every file"
+      "start": 67.23,
+      "end": 68.85,
+      "text": "Original sessions stay separate."
     },
     {
-      "start": 44.433,
-      "end": 46.231,
-      "text": "before removing local copies."
+      "start": 69.63,
+      "end": 75.01,
+      "text": "A background worker turns saved notes into concise summaries with source references."
     },
     {
-      "start": 46.754,
-      "end": 49.96,
-      "text": "Existing Git clones and history stay in place."
+      "start": 75.71,
+      "end": 80.31,
+      "text": "Those summaries are AI interpretations, so you can inspect the original notes."
     },
     {
-      "start": 50.611,
-      "end": 51.948,
-      "text": "Need that conversation again?"
+      "start": 80.71,
+      "end": 83.33,
+      "text": "Ask a question in your own words."
     },
     {
-      "start": 52.413,
-      "end": 55.666,
-      "text": "Restore the original session, then resume in Claude."
+      "start": 83.83,
+      "end": 87.09,
+      "text": "Hybrid search combines keywords with AI ranking."
     },
     {
-      "start": 56.037,
-      "end": 58.323,
-      "text": "Set up Mem Maestro on each machine."
+      "start": 87.79,
+      "end": 90.89,
+      "text": "Open a returned memory ID to read the details."
     },
     {
-      "start": 58.766,
-      "end": 60.556,
-      "text": "Your history follows your project."
+      "start": 91.35,
+      "end": 96.05,
+      "text": "Results show how much was searched; this does not scan every archived conversation."
     },
     {
-      "start": 60.884,
-      "end": 63.066,
-      "text": "Old sessions stay recoverable."
+      "start": 96.67,
+      "end": 102.11,
+      "text": "To reclaim native Claude storage, first measure usage and preview an archive."
+    },
+    {
+      "start": 102.71,
+      "end": 107.66,
+      "text": "Close all Claude processes, then archive a selected inactive session."
+    },
+    {
+      "start": 107.66,
+      "end": 113.01,
+      "text": "Local files are removed only after the cloud snapshot is downloaded and verified."
+    },
+    {
+      "start": 113.03,
+      "end": 117.11,
+      "text": "Small graph nodes keep references to archived sessions."
+    },
+    {
+      "start": 117.85,
+      "end": 123.32,
+      "text": "When older history is needed, recall downloads the selected archive, verifies it,"
+    },
+    {
+      "start": 123.32,
+      "end": 127.11,
+      "text": "reads the requested portion, and removes the temporary copy."
+    },
+    {
+      "start": 127.67,
+      "end": 129.67,
+      "text": "Your useful knowledge stays searchable."
+    },
+    {
+      "start": 130.09,
+      "end": 131.83,
+      "text": "Your history stays recoverable."
+    },
+    {
+      "start": 132.31,
+      "end": 134.37,
+      "text": "Your storage stays under your control."
     }
   ]
 }

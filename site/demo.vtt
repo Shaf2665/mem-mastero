@@ -1,93 +1,125 @@
 WEBVTT
 
 1
-00:00:00.650 --> 00:00:01.756
-Switch machines.
+00:00:00.650 --> 00:00:02.710
+Your coding conversations keep growing.
 
 2
-00:00:02.271 --> 00:00:03.430
-Keep your coding history.
+00:00:03.170 --> 00:00:07.270
+Useful decisions get buried, and switching computers can mean losing context.
 
 3
-00:00:04.347 --> 00:00:07.940
-Mem Maestro syncs your agent's original sessions and memory
+00:00:08.130 --> 00:00:14.450
+Mem Maestro brings project memory, session sync, and safe Claude archives into one plugin.
 
 4
-00:00:07.940 --> 00:00:11.729
-through a private GitHub repository or your Google Drive.
+00:00:15.110 --> 00:00:17.710
+Start inside your project's Git repository.
 
 5
-00:00:12.190 --> 00:00:14.125
-It follows the project's Git remote,
+00:00:18.210 --> 00:00:22.100
+Run setup on each machine, then connect your own memory store.
 
 6
-00:00:14.431 --> 00:00:15.983
-even when the folder path changes.
+00:00:22.100 --> 00:00:27.010
+Sessions can sync through Google Drive or a private GitHub repository.
 
 7
-00:00:16.481 --> 00:00:18.026
-Start your agent to sync,
+00:00:27.730 --> 00:00:30.610
+Choose private GitHub if you want Claude session archiving.
 
 8
-00:00:18.351 --> 00:00:21.236
-or use the optional Git push and pull hooks.
+00:00:30.630 --> 00:00:32.450
+Already installed?
 
 9
-00:00:21.783 --> 00:00:26.996
-Claude Code, Codex, Copilot CLI, and Pi are supported,
+00:00:32.910 --> 00:00:37.450
+Run update on every device before using this release's AI features.
 
 10
-00:00:27.172 --> 00:00:27.991
-with Pi in beta.
+00:00:38.290 --> 00:00:41.790
+Restart your agent, and approve updated hooks if it asks.
 
 11
-00:00:28.506 --> 00:00:29.609
-Need more disk space?
+00:00:42.330 --> 00:00:49.470
+Next, choose the coding client you already use: Codex, Claude Code, or Copilot.
 
 12
-00:00:30.065 --> 00:00:33.586
-Measure what's stored, then preview old Claude sessions.
+00:00:50.130 --> 00:00:52.790
+Enable semantic search and automatic summaries.
 
 13
-00:00:33.984 --> 00:00:36.725
-Close Claude and archive the sessions you choose
+00:00:53.470 --> 00:00:58.980
+Mem Maestro uses that client's existing sign-in, without requesting a separate API key.
 
 14
-00:00:36.725 --> 00:00:39.002
-to your private GitHub repository.
+00:00:58.980 --> 00:01:01.570
+Model calls use your account's allowance.
 
 15
-00:00:39.526 --> 00:00:41.553
-Mem Maestro uploads the archive,
+00:01:02.130 --> 00:01:06.210
+As you work, supported hooks capture small assistant observations.
 
 16
-00:00:41.989 --> 00:00:44.433
-downloads it again, and verifies every file
+00:01:07.230 --> 00:01:08.850
+Original sessions stay separate.
 
 17
-00:00:44.433 --> 00:00:46.231
-before removing local copies.
+00:01:09.630 --> 00:01:15.010
+A background worker turns saved notes into concise summaries with source references.
 
 18
-00:00:46.754 --> 00:00:49.960
-Existing Git clones and history stay in place.
+00:01:15.710 --> 00:01:20.310
+Those summaries are AI interpretations, so you can inspect the original notes.
 
 19
-00:00:50.611 --> 00:00:51.948
-Need that conversation again?
+00:01:20.710 --> 00:01:23.330
+Ask a question in your own words.
 
 20
-00:00:52.413 --> 00:00:55.666
-Restore the original session, then resume in Claude.
+00:01:23.830 --> 00:01:27.090
+Hybrid search combines keywords with AI ranking.
 
 21
-00:00:56.037 --> 00:00:58.323
-Set up Mem Maestro on each machine.
+00:01:27.790 --> 00:01:30.890
+Open a returned memory ID to read the details.
 
 22
-00:00:58.766 --> 00:01:00.556
-Your history follows your project.
+00:01:31.350 --> 00:01:36.050
+Results show how much was searched; this does not scan every archived conversation.
 
 23
-00:01:00.884 --> 00:01:03.066
-Old sessions stay recoverable.
+00:01:36.670 --> 00:01:42.110
+To reclaim native Claude storage, first measure usage and preview an archive.
+
+24
+00:01:42.710 --> 00:01:47.660
+Close all Claude processes, then archive a selected inactive session.
+
+25
+00:01:47.660 --> 00:01:53.010
+Local files are removed only after the cloud snapshot is downloaded and verified.
+
+26
+00:01:53.030 --> 00:01:57.110
+Small graph nodes keep references to archived sessions.
+
+27
+00:01:57.850 --> 00:02:03.320
+When older history is needed, recall downloads the selected archive, verifies it,
+
+28
+00:02:03.320 --> 00:02:07.110
+reads the requested portion, and removes the temporary copy.
+
+29
+00:02:07.670 --> 00:02:09.670
+Your useful knowledge stays searchable.
+
+30
+00:02:10.090 --> 00:02:11.830
+Your history stays recoverable.
+
+31
+00:02:12.310 --> 00:02:14.370
+Your storage stays under your control.
