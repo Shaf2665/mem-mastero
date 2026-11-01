@@ -6,6 +6,13 @@ const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const HASH = /^[a-f0-9]{64}$/;
 const digest = value => crypto.createHash('sha256').update(value).digest('hex');
 
+function isSystemAlias(file) {
+  // macOS exposes these root-owned directories through standard /private aliases.
+  // This exception never permits a link in a user's archive/session directory.
+  return process.platform === 'darwin' && ['/var', '/tmp', '/etc'].includes(file)
+    && fs.realpathSync.native(file) === '/private' + file;
+}
+
 function safePath(root, relative = '') {
   const target = path.resolve(root, relative);
   const rel = path.relative(path.resolve(root), target);
@@ -15,7 +22,7 @@ function safePath(root, relative = '') {
   let current = parsed.root;
   for (const part of target.slice(parsed.root.length).split(path.sep).filter(Boolean)) {
     current = path.join(current, part);
-    try { if (fs.lstatSync(current).isSymbolicLink()) throw new Error(`Refusing symbolic link: ${current}`); }
+    try { if (fs.lstatSync(current).isSymbolicLink() && !isSystemAlias(current)) throw new Error(`Refusing symbolic link: ${current}`); }
     catch (e) { if (e.code !== 'ENOENT') throw e; }
   }
   return target;
@@ -57,4 +64,4 @@ function withArchiveLock(memRoot, fn) {
   if (!require('./sync').withLock(dir, fn, path.join(dir, 'claude-archive.lock'))) throw new Error('Another Claude archive or sync is still running; retry later');
 }
 
-module.exports = { SESSION_ID, HASH, digest, safePath, statePath, readState, writeState, excludedFromPull, withArchiveLock };
+module.exports = { SESSION_ID, HASH, digest, isSystemAlias, safePath, statePath, readState, writeState, excludedFromPull, withArchiveLock };

@@ -11,7 +11,7 @@ for (const key of Object.keys(env)) {
 const systemConfig = path.join(root, 'gitconfig-system');
 fs.writeFileSync(systemConfig, '[core]\n  longpaths = true\n');
 Object.assign(env, {
-  HOME: root, USERPROFILE: root, TEMP: root, TMP: root,
+  HOME: root, USERPROFILE: root, TEMP: root, TMP: root, TMPDIR: root,
   GIT_CONFIG_GLOBAL: path.join(root, 'gitconfig-global'), GIT_CONFIG_SYSTEM: systemConfig,
 });
 try {

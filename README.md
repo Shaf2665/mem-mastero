@@ -124,7 +124,7 @@ Disabled Codex installations are left disabled and skipped. Pi updates cover its
 
 ## Storage and Claude session archives
 
-**Available in v0.10.0.** Measure local storage, then explicitly archive inactive Claude Code sessions to your configured private GitHub memory repository. Update mem-mastero on every machine first. Archiving is optional; hooks do not automatically remove sessions.
+**Available in v0.10.1.** Measure local storage, then explicitly archive inactive Claude Code sessions to your configured private GitHub memory repository. Update mem-mastero on every machine first. Archiving is optional; hooks do not automatically remove sessions.
 
 Run these commands from the project repository:
 

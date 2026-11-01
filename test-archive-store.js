@@ -122,6 +122,23 @@ try {
   assert.throws(() => s.store.downloadSnapshot({ ...published, basePath: '../elsewhere' }, makeDir()), /descriptor does not match/);
   assert.throws(() => s.store.readManifest({ ...published, commit: '../refs' }), /invalid commit/);
 
+  if (process.platform === 'darwin') {
+    const aliasRoot = fs.mkdtempSync('/tmp/mem-archive-alias-');
+    try {
+      const upload = path.join(aliasRoot, 'upload');
+      fs.cpSync(first.dir, upload, { recursive: true });
+      assert.deepEqual(s.store.publishSnapshot({ ...first, dir: upload }), published, 'backend accepts the standard /tmp system alias');
+      s.store.downloadSnapshot(published, path.join(aliasRoot, 'download'));
+      fs.symlinkSync(upload, path.join(aliasRoot, 'user-link'), 'dir');
+      assert.throws(() => s.store.publishSnapshot({ ...first, dir: path.join(aliasRoot, 'user-link') }), /real directories/, 'system alias support does not allow user-created child links');
+    } finally {
+      const resolved = fs.realpathSync.native(aliasRoot);
+      assert.equal(path.dirname(resolved), fs.realpathSync.native('/tmp'));
+      assert(path.basename(resolved).startsWith('mem-archive-alias-'));
+      fs.rmSync(resolved, { recursive: true, force: true });
+    }
+  }
+
   const writes = () => s.calls.filter(c => c.method !== 'GET').length;
   const before = writes();
   assert.deepEqual(s.store.publishSnapshot(first), published);

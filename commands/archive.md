@@ -18,7 +18,7 @@ npx --yes github:Shaf2665/mem-mastero archive --session <id>
 
 For an age-based selection, the terminal command is `npx --yes github:Shaf2665/mem-mastero archive --older-than <days>`.
 
-Do not run the removing command from an active Claude session. The archive command uploads to the project's configured private GitHub memory repository, downloads and verifies the complete snapshot, and only then removes unchanged local session files. Claude must remain closed until it finishes. Existing memory clones and their Git history remain; durable auto-memory is not archived. All machines should run mem-mastero v0.10.0 or later.
+Do not run the removing command from an active Claude session. The archive command uploads to the project's configured private GitHub memory repository, downloads and verifies the complete snapshot, and only then removes unchanged local session files. Claude must remain closed until it finishes. Existing memory clones and their Git history remain; durable auto-memory is not archived. All machines should run mem-mastero v0.10.1 or later.
 
 For cloud archive inventory, use `npx --yes github:Shaf2665/mem-mastero archive --list`. Never substitute manual file deletion for the archive command.
 

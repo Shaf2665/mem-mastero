@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { spawnSync } = require('child_process');
+const { isSystemAlias } = require('./archive-state');
 
 const BRANCH = 'mem-mastero-archives-v1';
 const MAX_BLOB_BYTES = 8 * 1024 * 1024;
@@ -89,7 +90,7 @@ function safeDirectory(dir) {
   while (true) {
     try {
       const stat = fs.lstatSync(cursor);
-      if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error('archive staging path must contain only real directories');
+      if (!stat.isDirectory() && !(stat.isSymbolicLink() && isSystemAlias(cursor))) throw new Error('archive staging path must contain only real directories');
     } catch (e) { if (e.code !== 'ENOENT') throw e; }
     const parent = path.dirname(cursor);
     if (parent === cursor) break;

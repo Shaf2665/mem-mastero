@@ -5,7 +5,7 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { archiveSession, targetPath, recoverPending } = require('./archive');
-const { readState, writeState } = require('./archive-state');
+const { readState, writeState, safePath } = require('./archive-state');
 const { discoverSessions } = require('./claude-files');
 
 const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'mm-archive-adversarial-')));
@@ -29,7 +29,15 @@ function containsBytes(dir, bytes) {
 }
 
 try {
+  if (process.platform === 'darwin') {
+    for (const alias of ['/var', '/tmp', '/etc']) {
+      assert.doesNotThrow(() => safePath(alias, 'mem-mastero-alias-check'), 'standard macOS system aliases are valid ancestors');
+    }
+  }
   fs.mkdirSync(projectDir, { recursive: true });
+  const linkedChild = path.join(root, 'linked-child');
+  fs.symlinkSync(projectDir, linkedChild, process.platform === 'win32' ? 'junction' : 'dir');
+  assert.throws(() => safePath(root, 'linked-child/session.jsonl'), /Refusing symbolic link/);
   const transcript = path.join(projectDir, sessionId + '.jsonl');
   fs.writeFileSync(transcript, original);
   const cloud = path.join(root, 'fake-cloud');
