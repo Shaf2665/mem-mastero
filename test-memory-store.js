@@ -11,6 +11,12 @@ const observation = (text, extra = {}) => ({ kind: 'observation', title: 'Captur
   provenance: 'captured', source: { agent: 'claude', sessionId: 'session-1', eventId: 'event-1' }, createdAt: '2026-10-01T12:00:00Z', ...extra });
 const put = (file, value) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, typeof value === 'string' ? value : JSON.stringify(value)); };
 const recordPath = (c, id) => path.join(memory.memoryPath(c), 'records', id.slice(7) + '.json');
+const hash = value => require('node:crypto').createHash('sha256').update(JSON.stringify(value)).digest('hex');
+const generated = (ids, text = 'AI-derived summary of the cited source records.') => {
+  ids = [...ids].sort();
+  return { kind: 'summary', provenance: 'generated', text, title: 'Generated summary', createdAt: '2026-10-01T12:00:00Z',
+    source: { agent: 'mem-mastero-ai', eventId: 'summary-v1:' + 'a'.repeat(64) + ':' + hash(ids), memoryIds: ids } };
+};
 
 try {
   assert.deepEqual(memory.listMemories(A), []);
@@ -74,6 +80,9 @@ try {
   const defaultTime = memory.addMemory(A, observation('No event clock', { createdAt: undefined, source: { agent: 'codex', sessionId: 's-2' } }));
   assert.equal(defaultTime.createdAt, '1970-01-01T00:00:00.000Z');
   assert.deepEqual(memory.addMemory(A, observation(defaultTime.text, { createdAt: undefined, source: { agent: 'codex', sessionId: 's-2' } })), defaultTime);
+  const titleBoundary = memory.addMemory(context('title-boundary'), { text: 'word '.repeat(100) });
+  assert.equal(titleBoundary.title, titleBoundary.title.trim());
+  assert.equal(memory.getMemory(context('title-boundary'), titleBoundary.id).id, titleBoundary.id, 'a derived title ending at whitespace remains canonical after publication');
   const manual = memory.addMemory(A, { kind: 'decision', title: 'Queue architecture', text: 'Use a durable queue.', tags: ['Queue', 'queue'], source: { agent: 'manual' } });
   const anotherManual = memory.addMemory(A, { kind: 'decision', title: 'Queue architecture', text: 'Use a durable queue.', tags: ['queue'] });
   assert.notEqual(manual.id, anotherManual.id, 'explicit repeated notes have independent identities');
@@ -156,6 +165,78 @@ try {
   assert.equal(memory.getMemory(FB, folderNote.id).id, folderNote.id);
   assert.notEqual(memory.memoryPath({ ...FA, store: FB.store }), memory.memoryPath(FA), 'two stores in one local home remain isolated');
   assert.throws(() => memory.addMemory({ ...A, store: {} }, observation('missing target')), /configured/);
+
+  // Derived notes inherit source visibility, including across sync and exports.
+  const lineage = context('lineage'), lineagePeer = context('lineage-peer');
+  const source = memory.addMemory(lineage, observation('A source fact that can later be forgotten.'));
+  const summaryResult = memory.addGeneratedMemory(lineage, generated([source.id]));
+  assert.equal(summaryResult.created, true);
+  const summary = memory.getMemory(lineage, summaryResult.id);
+  assert.equal(summary.provenance, 'generated');
+  assert.deepEqual(summary.source.memoryIds, [source.id]);
+  const sameRecipe = memory.addGeneratedMemory(lineage, generated([source.id], 'Different model wording for the same inputs.'));
+  assert.deepEqual(sameRecipe, { created: false, status: 'already_generated', id: summary.id }, 'atomic recipe publication prevents nondeterministic duplicate summaries');
+  const descendant = memory.addMemory(lineage, { text: 'Manual note derived from an AI summary.', source: { agent: 'manual', memoryIds: [summary.id] } });
+  assert(memory.getMemory(lineage, descendant.id));
+  memory.importMemories(lineagePeer, memory.exportMemories(lineage));
+  memory.forgetMemory(lineage, source.id);
+  assert.equal(memory.getMemory(lineage, summary.id), null, 'forgetting a source also hides its derived summary');
+  assert.equal(memory.getMemory(lineage, descendant.id), null, 'lineage suppression is transitive');
+  assert.equal(memory.searchMemories(lineage, 'summary').length, 0);
+  assert.equal(memory.timelineMemories(lineage).length, 0);
+  assert.equal(memory.exportMemories(lineage).records.length, 0, 'exports cannot leak derived forgotten content');
+  const lineageRemote = path.join(root, 'lineage-remote');
+  memory.syncMemories(lineage, lineageRemote); memory.syncMemories(lineagePeer, lineageRemote);
+  assert.equal(memory.getMemory(lineagePeer, summary.id), null, 'source tombstones suppress a stale device summary');
+  assert.equal(memory.addGeneratedMemory(lineage, generated([source.id], 'Retry must not resurrect a summary.')).status, 'already_generated');
+  assert.equal(memory.addGeneratedMemory(context('wrong-lineage'), generated([source.id])).status, 'sources_changed');
+  assert.throws(() => memory.addMemory(lineage, { ...generated([source.id]), kind: 'observation' }), /generated memory provenance/);
+  assert.throws(() => memory.addMemory(lineage, { ...generated([source.id]), source: { agent: 'manual', memoryIds: [source.id] } }), /generated memory provenance/);
+  assert.throws(() => memory.addMemory(lineage, { text: 'Duplicate refs', source: { agent: 'manual', memoryIds: [source.id, source.id] } }), /Duplicate memory source/);
+
+  // A content-free receipt survives export/import when the summary itself was
+  // forgotten, so nondeterministic regeneration cannot bypass the deletion.
+  const receiptContext = context('receipt');
+  const receiptSource = memory.addMemory(receiptContext, observation('The original remains active after summary deletion.'));
+  const receiptSummary = memory.addGeneratedMemory(receiptContext, generated([receiptSource.id]));
+  memory.forgetMemory(receiptContext, receiptSummary.id);
+  const receiptExport = memory.exportMemories(receiptContext);
+  assert.equal(receiptExport.records.length, 1);
+  assert.deepEqual(receiptExport.tombstones[0].summary.memoryIds, [receiptSource.id]);
+  assert(!JSON.stringify(receiptExport.tombstones).includes('AI-derived'));
+  const receiptPeer = context('receipt-peer'); memory.importMemories(receiptPeer, receiptExport);
+  assert.equal(memory.summaryHistory(receiptPeer).length, 1);
+  assert.equal(memory.addGeneratedMemory(receiptPeer, generated([receiptSource.id], 'Fresh wording is still the same forgotten recipe.')).status, 'already_generated');
+  assert.equal(memory.getMemory(receiptPeer, receiptSummary.id), null);
+  const generatedPeer = context('independent-generator');
+  memory.importMemories(generatedPeer, { ...receiptExport, tombstones: [] });
+  const differentWording = memory.addGeneratedMemory(generatedPeer, generated([receiptSource.id], 'Independent device wording for the same input set.'));
+  assert.equal(differentWording.created, true);
+  memory.importMemories(receiptContext, memory.exportMemories(generatedPeer));
+  assert.equal(memory.getMemory(receiptContext, differentWording.id), null, 'forgetting a recipe suppresses different generated wording from another device');
+  memory.importMemories(generatedPeer, memory.exportMemories(receiptContext));
+  assert.equal(memory.getMemory(generatedPeer, differentWording.id), null, 'the content-free receipt also suppresses the other device output');
+
+  const generatorOne = context('generator-one'), generatorTwo = context('generator-two');
+  const commonSource = memory.addMemory(generatorOne, observation('Shared source for concurrent offline generators.'));
+  memory.importMemories(generatorTwo, memory.exportMemories(generatorOne));
+  const genOne = memory.addGeneratedMemory(generatorOne, generated([commonSource.id], 'First independently generated wording.'));
+  const genTwo = memory.addGeneratedMemory(generatorTwo, generated([commonSource.id], 'Second independently generated wording.'));
+  const generatorRemote = path.join(root, 'generator-remote');
+  memory.syncMemories(generatorOne, generatorRemote); memory.syncMemories(generatorTwo, generatorRemote); memory.syncMemories(generatorOne, generatorRemote);
+  for (const device of [generatorOne, generatorTwo]) {
+    const generatedRows = memory.listMemories(device).filter(record => record.provenance === 'generated');
+    assert.equal(generatedRows.length, 1, 'sync resolves nondeterministic duplicates to one active generated result');
+    assert.equal(generatedRows[0].id, [genOne.id, genTwo.id].sort()[0], 'winner is independent of sync order');
+  }
+  const invalidReceipt = memory.exportMemories(receiptContext);
+  invalidReceipt.tombstones[0].summary.eventId = 'summary-v1:' + 'b'.repeat(64) + ':' + hash([receiptSource.id]);
+  assert.throws(() => memory.importMemories(receiptContext, invalidReceipt), /Conflicting immutable|receipt/);
+  const missingSourceContext = context('missing-lineage');
+  memory.importMemories(missingSourceContext, { ...memory.exportMemories(lineagePeer), records: [summary], tombstones: [] });
+  assert.equal(memory.getMemory(missingSourceContext, summary.id), null, 'out-of-order sync cannot expose a summary before its sources');
+  memory.importMemories(missingSourceContext, { ...memory.exportMemories(lineagePeer), records: [source], tombstones: [] });
+  assert.equal(memory.getMemory(missingSourceContext, summary.id).id, summary.id);
 
   // Validate whole remote input before publishing any new local records.
   const badRemote = path.join(root, 'bad-remote'); fs.cpSync(remote, badRemote, { recursive: true });

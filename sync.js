@@ -506,6 +506,8 @@ function run(names, mode, input, loud = mode === 'start') {
     context = resolveMemoryContext(cwd);
     require('./memory-runtime').captureHook(context, names, input, cwd, mode);
   } catch (e) { if (context) console.error(`mem-mastero memory capture: ${e.message}`); }
+  if (context && mode === 'push') try { require('./memory-ai-jobs').scheduleAI(context); }
+  catch { console.error('mem-mastero: AI summary scheduling failed; local notes remain available'); }
   if (mode === 'start' && context) try {
     // Print existing knowledge before a slow cloud operation can use up the
     // host's hook budget. Search/get see newly synced records after sync ends.
@@ -514,6 +516,7 @@ function run(names, mode, input, loud = mode === 'start') {
   } catch (e) { console.error(`mem-mastero memory context: ${e.message}`); }
   try { return runSessions(names, mode, input, loud); }
   finally {
+    if (context && mode === 'start') try { require('./memory-ai-jobs').scheduleAI(context); } catch {}
     // A first device with no cached notes receives its newly pulled knowledge.
     if (mode === 'start' && context && !contextEmitted) try {
       const text = require('./memory-runtime').buildContext(context);
@@ -613,7 +616,8 @@ const globalGit = (...args) => { try { return execFileSync('git', ['config', '--
 function refreshHookScript() {
   // Publish helpers first so a newly installed dispatcher never sees missing modules.
   for (const name of ['archive-state.js', 'archive-store.js', 'claude-files.js', 'archive.js', 'archive-graph.js', 'archive-recall.js', 'archive-access.js',
-    'memory-privacy.js', 'memory-store.js', 'memory-capture.js', 'memory-runtime.js', 'memory-import.js', 'memory-view.js', 'memory-command.js', 'memory-mcp.js', 'package.json', 'sync.js']) {
+    'memory-privacy.js', 'memory-store.js', 'memory-capture.js', 'memory-runtime.js', 'memory-import.js', 'memory-view.js', 'memory-command.js', 'memory-mcp.js',
+    'memory-ai-provider.js', 'memory-semantic.js', 'memory-summary.js', 'memory-ai-jobs.js', 'memory-copilot-provider.js', 'package.json', 'sync.js']) {
     const dst = path.join(BASE(), name), source = fs.readFileSync(path.join(path.dirname(__filename), name));
     try { if (fs.readFileSync(dst).equals(source)) continue; } catch {}
     atomicWrite(dst, source);
@@ -929,13 +933,20 @@ const GIT_LOCAL_ENV = ['GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_CONFIG', 'GIT_CO
 if (require.main === module) {
   for (const k of GIT_LOCAL_ENV) delete process.env[k];
   const [a, b, ...rest] = process.argv.slice(2);
+  if (process.env.MEM_MASTERO_AI_CHILD) return; // Model-processing children must never capture/sync themselves.
+  if (a === 'memory-worker') {
+    Promise.resolve().then(() => require('./memory-ai-jobs').runAIJob(resolveMemoryContext(b), {
+      sync: context => runSessions([], 'push', { cwd: context.cwd }, false, true),
+    })).catch(() => { process.exitCode = 1; });
+    return;
+  }
   if (a === 'memory') {
-    try {
-      require('./memory-command').runMemoryCommand(process.argv.slice(3), {
+    Promise.resolve().then(() => {
+      return require('./memory-command').runMemoryCommand(process.argv.slice(3), {
         context: () => resolveMemoryContext(process.cwd()),
         sync: context => runSessions([], 'start', { cwd: context.cwd }, false, true),
       });
-    } catch (e) { console.error(`mem-mastero memory: ${e.message}`); process.exitCode = 1; }
+    }).catch(e => { console.error(`mem-mastero memory: ${e.message}`); process.exitCode = 1; });
     return;
   }
   if (['storage', 'archive', 'restore', 'graph', 'recall'].includes(a)) {
@@ -973,6 +984,9 @@ if (require.main === module) {
   memory search QUERY    find decisions, fixes and preferences (also timeline/get/add/edit/forget)
   memory sync            sync project knowledge now, without native session files
   memory view            generate a private offline knowledge viewer
+  memory ai-settings     configure an existing signed-in AI client (local settings only)
+  memory ai-status       show AI configuration and automatic summary status
+  memory summarize       generate a source-linked AI summary (--dry-run previews sources)
   storage [--json]        measure local Claude and mem-mastero storage
   archive --dry-run       preview inactive Claude sessions older than 30 days
   archive --session ID    upload, verify, then remove one stopped Claude session

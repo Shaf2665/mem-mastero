@@ -5,8 +5,9 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { digest, safePath } = require('./archive-state');
 const KINDS = new Set(['decision', 'bugfix', 'discovery', 'preference', 'constraint', 'progress', 'summary', 'observation']);
-const PROVENANCE = new Set(['manual', 'captured', 'imported']);
+const PROVENANCE = new Set(['manual', 'captured', 'imported', 'generated']);
 const ID = /^memory:[a-f0-9]{64}$/;
+const SUMMARY_EVENT = /^summary-v1:[a-f0-9]{64}:[a-f0-9]{64}$/;
 const FILE = /^[a-f0-9]{64}\.json$/;
 const MAX_RECORDS = 10000;
 const MAX_TEXT_BYTES = 16 * 1024;
@@ -56,7 +57,7 @@ function date(value, fallback) {
 }
 function sourceOf(value, provenance) {
   if (value === undefined) value = { agent: provenance === 'manual' ? 'manual' : 'unknown' };
-  if (!exactKeys(value, ['agent', 'sessionId', 'eventId', 'archiveNode'])) throw new Error('Invalid memory source');
+  if (!exactKeys(value, ['agent', 'sessionId', 'eventId', 'archiveNode', 'memoryIds'])) throw new Error('Invalid memory source');
   if (typeof value.agent !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(value.agent)) throw new Error('Invalid memory source agent');
   const source = { agent: value.agent };
   for (const key of ['sessionId', 'eventId']) if (value[key] !== undefined) {
@@ -67,7 +68,18 @@ function sourceOf(value, provenance) {
     if (typeof value.archiveNode !== 'string' || !/^archive:[a-f0-9]{64}$/.test(value.archiveNode)) throw new Error('Invalid archive memory reference');
     source.archiveNode = value.archiveNode;
   }
+  if (value.memoryIds !== undefined) source.memoryIds = sourceIds(value.memoryIds);
   return source;
+}
+
+function sourceIds(ids) {
+  if (!Array.isArray(ids) || !ids.length || ids.length > 20) throw new Error('Invalid memory source IDs');
+  const values = Array.from(ids, id => {
+    if (typeof id !== 'string' || !ID.test(id)) throw new Error('Invalid memory source ID');
+    return id;
+  });
+  if (new Set(values).size !== values.length) throw new Error('Duplicate memory source ID');
+  return values.sort();
 }
 
 function payload(context, input, { stored = false } = {}) {
@@ -79,12 +91,15 @@ function payload(context, input, { stored = false } = {}) {
   if (!PROVENANCE.has(provenance) || !KINDS.has(kind)) throw new Error('Invalid memory kind or provenance');
   const text = normalizedText(input.text, MAX_TEXT_BYTES, 'text');
   if (!text || /^\[REDACTED(?:[^\]]*)\]$/i.test(text)) throw new Error('Memory text is empty after privacy filtering');
-  const title = normalizedText(input.title, 512, 'title', true) || text.split('\n')[0].slice(0, 160);
+  const title = normalizedText(input.title, 512, 'title', true) || text.split('\n')[0].slice(0, 160).trim();
   if (title.includes('\n')) throw new Error('Memory title must be one line');
   if (input.tags !== undefined && (!Array.isArray(input.tags) || input.tags.length > 32)) throw new Error('Invalid memory tags');
   const tags = [...new Set((input.tags || []).map(tag => normalizedText(tag, 128, 'tag').toLowerCase()).filter(Boolean))].sort();
   if (tags.some(tag => /\s/.test(tag))) throw new Error('Memory tags must not contain whitespace');
   const source = sourceOf(input.source, provenance);
+  if (provenance === 'generated' && (kind !== 'summary' || source.agent !== 'mem-mastero-ai'
+    || !SUMMARY_EVENT.test(source.eventId || '') || !source.memoryIds
+    || source.eventId.split(':')[2] !== digest(JSON.stringify(source.memoryIds)))) throw new Error('Invalid generated memory provenance');
   const createdAt = date(input.createdAt, provenance === 'manual' ? new Date().toISOString() : '1970-01-01T00:00:00.000Z');
   const result = { version: 1, projectId: s.projectId, storeId: s.storeId, kind, title, text, tags, source, provenance, createdAt };
   if (provenance === 'manual') {
@@ -107,14 +122,20 @@ function canonicalRecord(context, record) {
   if (!sameValue(record, expected)) throw new Error('Memory record hash, privacy filtering, or scope mismatch');
   return expected;
 }
-function tombstoneFor(context, id) {
+function tombstoneFor(context, id, summary) {
   if (typeof id !== 'string' || !ID.test(id)) throw new Error('Invalid memory ID');
   const s = scope(context);
-  return { version: 1, id, projectId: s.projectId, storeId: s.storeId };
+  const result = { version: 1, id, projectId: s.projectId, storeId: s.storeId };
+  if (summary !== undefined) {
+    if (!exactKeys(summary, ['eventId', 'memoryIds']) || !SUMMARY_EVENT.test(summary.eventId || '')) throw new Error('Invalid summary receipt');
+    result.summary = { eventId: summary.eventId, memoryIds: sourceIds(summary.memoryIds) };
+    if (summary.eventId.split(':')[2] !== digest(JSON.stringify(result.summary.memoryIds))) throw new Error('Invalid summary receipt identity');
+  }
+  return result;
 }
 function canonicalTombstone(context, value) {
-  if (!object(value) || !sameValue(value, tombstoneFor(context, value.id))) throw new Error('Invalid memory tombstone or scope');
-  return tombstoneFor(context, value.id);
+  if (!object(value) || !sameValue(value, tombstoneFor(context, value.id, value.summary))) throw new Error('Invalid memory tombstone or scope');
+  return tombstoneFor(context, value.id, value.summary);
 }
 function sameValue(a, b) {
   if (a === b) return true;
@@ -150,7 +171,16 @@ function readCollection(context, root) {
       result[kind].set(record.id, record);
     }
   }
+  validateReceipts(result);
   return result;
+}
+function validateReceipts(collection) {
+  for (const [id, tombstone] of collection.tombstones) {
+    const record = collection.records.get(id);
+    if (record?.provenance === 'generated' && !tombstone.summary) throw new Error('Generated summary deletion requires a receipt');
+    if (tombstone.summary && record && (record.provenance !== 'generated' || !sameValue(tombstone.summary,
+      { eventId: record.source.eventId, memoryIds: record.source.memoryIds }))) throw new Error('Summary receipt does not match its record');
+  }
 }
 function combine(a, b) {
   const result = { records: new Map(a.records), tombstones: new Map(a.tombstones) };
@@ -164,6 +194,7 @@ function combine(a, b) {
     for (const value of result[kind].values()) total += bytes(value).length;
   }
   if (total > MAX_COLLECTION_BYTES) throw new Error('Memory collection exceeds its byte limit');
+  validateReceipts(result);
   return result;
 }
 function publish(context, root, kind, value) {
@@ -182,7 +213,38 @@ function publish(context, root, kind, value) {
   require('./sync').atomicWrite(safePath(dir, path.basename(file)), bytes(value));
   return true;
 }
-function active(collection) { return [...collection.records.values()].filter(r => !collection.tombstones.has(r.id)); }
+function active(collection) {
+  const pending = new Map(), dependents = new Map(), ready = [], visible = new Set();
+  const forgottenRecipes = new Set([...collection.tombstones.values()].filter(row => row.summary).map(row => row.summary.eventId));
+  const recipeWinners = new Map();
+  for (const record of collection.records.values()) if (record.provenance === 'generated') {
+    const previous = recipeWinners.get(record.source.eventId);
+    if (!previous || record.id < previous) recipeWinners.set(record.source.eventId, record.id);
+  }
+  for (const record of collection.records.values()) {
+    if (collection.tombstones.has(record.id)) continue;
+    if (record.provenance === 'generated' && (forgottenRecipes.has(record.source.eventId)
+      || recipeWinners.get(record.source.eventId) !== record.id)) continue;
+    const sources = record.source.memoryIds || [];
+    pending.set(record.id, sources.length);
+    if (!sources.length) ready.push(record.id);
+    for (const source of sources) {
+      if (!dependents.has(source)) dependents.set(source, []);
+      dependents.get(source).push(record.id);
+    }
+  }
+  // Only source-free records and their fully resolved descendants become
+  // visible. Missing sources, tombstones and cycles remain hidden. The queue
+  // avoids recursive stack limits or repeated traversals of shared ancestry.
+  for (let i = 0; i < ready.length; i++) {
+    const id = ready[i]; visible.add(id);
+    for (const dependent of dependents.get(id) || []) {
+      pending.set(dependent, pending.get(dependent) - 1);
+      if (pending.get(dependent) === 0) ready.push(dependent);
+    }
+  }
+  return [...collection.records.values()].filter(record => visible.has(record.id));
+}
 function byTime(a, b) { return a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id); }
 
 function addMemories(context, inputs) {
@@ -211,16 +273,52 @@ function getMemories(context, ids) {
   scope(context);
   if (!checked.length) return [];
   const local = readCollection(context, memoryPath(context));
-  return checked.map(id => local.tombstones.has(id) ? null : local.records.get(id) || null);
+  const visible = new Map(active(local).map(record => [record.id, record]));
+  return checked.map(id => visible.get(id) || null);
 }
 function getMemory(context, id) { return getMemories(context, [id])[0]; }
 function forgetMemory(context, id) {
-  const tombstone = tombstoneFor(context, id);
+  tombstoneFor(context, id); // Validate before opening the local collection.
   return lock(context, () => {
     const root = memoryPath(context), local = readCollection(context, root);
     if (!local.records.has(id) && !local.tombstones.has(id)) throw new Error('Memory not found in this project');
+    const record = local.records.get(id);
+    const receipt = record?.provenance === 'generated' ? { eventId: record.source.eventId, memoryIds: record.source.memoryIds } : undefined;
+    const tombstone = local.tombstones.get(id) || tombstoneFor(context, id, receipt);
+    combine(local, { records: new Map(), tombstones: new Map([[id, tombstone]]) });
     publish(context, root, 'tombstones', tombstone);
     return { id, forgotten: true };
+  });
+}
+
+// Receipts contain identifiers only. Forgotten summary text is never returned
+// through this internal planning API or through active get/search/export.
+function summaryHistory(context) {
+  const local = readCollection(context, memoryPath(context));
+  const rows = new Map();
+  for (const record of local.records.values()) if (record.provenance === 'generated') rows.set(record.id,
+    { id: record.id, eventId: record.source.eventId, memoryIds: record.source.memoryIds });
+  for (const tombstone of local.tombstones.values()) if (tombstone.summary) rows.set(tombstone.id,
+    { id: tombstone.id, ...tombstone.summary });
+  return [...rows.values()].sort((a, b) => a.id.localeCompare(b.id));
+}
+
+function addGeneratedMemory(context, input) {
+  const record = recordFor(context, input);
+  if (record.provenance !== 'generated') throw new Error('Generated publication requires generated provenance');
+  return lock(context, () => {
+    const root = memoryPath(context), local = readCollection(context, root);
+    for (const previous of local.records.values()) if (previous.provenance === 'generated' && previous.source.eventId === record.source.eventId) {
+      return { created: false, status: 'already_generated', id: previous.id };
+    }
+    for (const previous of local.tombstones.values()) if (previous.summary?.eventId === record.source.eventId) {
+      return { created: false, status: 'already_generated', id: previous.id };
+    }
+    const visible = new Map(active(local).map(item => [item.id, item]));
+    if (record.source.memoryIds.some(id => !visible.has(id) || visible.get(id).provenance === 'generated')) return { created: false, status: 'sources_changed' };
+    combine(local, { records: new Map([[record.id, record]]), tombstones: new Map() });
+    publish(context, root, 'records', record);
+    return { created: true, status: 'created', id: record.id };
   });
 }
 
@@ -310,5 +408,5 @@ function syncMemories(context, remoteDir, { mode = 'both' } = {}) {
   });
 }
 
-module.exports = { addMemory, addMemories, listMemories, getMemory, getMemories, searchMemories, timelineMemories, forgetMemory, exportMemories, importMemories, syncMemories,
+module.exports = { addMemory, addMemories, addGeneratedMemory, summaryHistory, listMemories, getMemory, getMemories, searchMemories, timelineMemories, forgetMemory, exportMemories, importMemories, syncMemories,
   previewMemory: recordFor, memoryPath, scope, KINDS, MAX_RECORDS, MAX_TEXT_BYTES, MAX_EXPORT_BYTES };

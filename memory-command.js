@@ -2,13 +2,14 @@ const fs = require('node:fs');
 const path = require('node:path');
 const store = require('./memory-store');
 const runtime = require('./memory-runtime');
-const USAGE = 'Usage: memory status|sync|search [QUERY]|get ID|timeline [ID]|add --text TEXT|edit ID --text TEXT|forget ID|context|settings|capture --agent AGENT --file PATH|export --output PATH|import PATH|import-claude-mem PATH --source-project NAME [--dry-run]|view [--output PATH] [--json]';
+const USAGE = 'Usage: memory status|sync|search [QUERY] [--mode keyword|semantic|hybrid]|get ID|timeline [ID]|add --text TEXT|edit ID --text TEXT|forget ID|context|settings|ai-settings|ai-status|summarize [--dry-run]|capture --agent AGENT --file PATH|export --output PATH|import PATH|import-claude-mem PATH --source-project NAME [--dry-run]|view [--output PATH] [--json]';
 const FLAGS = {
-  status: [], sync: [], search: ['kind', 'agent', 'from', 'to', 'limit'], get: [], timeline: ['limit'],
+  status: [], sync: [], search: ['kind', 'agent', 'from', 'to', 'limit', 'mode', 'offset', 'candidates'], get: [], timeline: ['limit'],
   add: ['title', 'text', 'kind', 'tags', 'agent', 'session', 'archive-node', 'stdin'],
   edit: ['title', 'text', 'kind', 'tags', 'agent', 'session', 'archive-node', 'stdin'], forget: [],
   context: ['query', 'budget'], settings: ['capture', 'context', 'budget'], capture: ['agent', 'file', 'session'],
   export: ['output'], import: [], 'import-claude-mem': ['source-project', 'dry-run'], view: ['output'],
+  'ai-settings': ['stdin', 'provider', 'model', 'semantic', 'summaries', 'automatic'], 'ai-status': [], summarize: ['limit', 'dry-run'],
 };
 function parseMemoryArgs(args) {
   const command = args[0] || 'status', options = {}, positional = [];
@@ -24,16 +25,18 @@ function parseMemoryArgs(args) {
   const required = ['get', 'edit', 'forget', 'import', 'import-claude-mem'].includes(command);
   const optional = ['search', 'timeline'].includes(command);
   if (positional.length > (required || optional ? 1 : 0) || required && positional.length !== 1) throw new Error(USAGE);
-  for (const key of ['limit', 'budget']) if (options[key] !== undefined) {
+  for (const key of ['limit', 'budget', 'offset', 'candidates']) if (options[key] !== undefined) {
     if (!/^\d+$/.test(options[key]) || !Number.isSafeInteger(Number(options[key]))) throw new Error(USAGE);
     options[key] = Number(options[key]);
-    if (options[key] < (key === 'limit' ? 1 : 512) || options[key] > (key === 'limit' ? 100 : 12000)) throw new Error(USAGE);
+    const bounds = { limit: [1, 100], budget: [512, 12000], offset: [0, 10000], candidates: [1, 200] }[key];
+    if (options[key] < bounds[0] || options[key] > bounds[1]) throw new Error(USAGE);
   }
   if (options.stdin && Object.keys(options).some(k => !['stdin', 'json'].includes(k))) throw new Error('Use --stdin alone for note fields');
   if (['add', 'edit'].includes(command) && !options.stdin && options.text === undefined) throw new Error(USAGE);
   if (command === 'capture' && (!options.agent || !options.file)) throw new Error(USAGE);
   if (command === 'export' && !options.output) throw new Error(USAGE);
   if (command === 'import-claude-mem' && !options['source-project']) throw new Error(USAGE);
+  if (options.mode !== undefined && !['auto', 'keyword', 'semantic', 'hybrid'].includes(options.mode)) throw new Error(USAGE);
   return { command, options, argument: positional[0] };
 }
 function jsonFile(file, max = 65 * 1024 * 1024) {
@@ -67,6 +70,7 @@ function noteFields(o, input) {
 function runMemoryCommand(args, services) {
   const { command, options: o, argument } = parseMemoryArgs(args);
   const context = services.context(), log = services.log || console.log;
+  const finish = value => { log(JSON.stringify(value, null, 2)); return value; };
   let result;
   switch (command) {
     case 'status': result = { projectId: context.projectId, settings: runtime.readSettings(context), activeMemories: store.listMemories(context).length }; break;
@@ -81,7 +85,41 @@ function runMemoryCommand(args, services) {
       result = { replaced: argument, memory: replacement }; break;
     }
     case 'get': result = store.getMemory(context, argument); if (!result) throw new Error('Memory not found in this project'); break;
-    case 'search': result = { matches: store.searchMemories(context, argument || '', { kind: o.kind, agent: o.agent, from: o.from, to: o.to, limit: o.limit || 20 }) }; break;
+    case 'search': {
+      const options = { kind: o.kind, agent: o.agent, from: o.from, to: o.to, limit: o.limit || 20 };
+      // Preserve the synchronous local path for callers and for disabled AI.
+      let enabled = false;
+      if (o.mode === undefined) try { enabled = require('./memory-ai-provider').readAISettings(context).semantic; }
+      catch { result = { matches: store.searchMemories(context, argument || '', options), modeUsed: 'keyword', fallback: 'configuration_unavailable' }; break; }
+      if (o.mode === 'keyword' || o.mode === undefined && !enabled) {
+        result = { matches: store.searchMemories(context, argument || '', options), modeUsed: 'keyword' }; break;
+      }
+      return require('./memory-semantic').searchMemoriesAI(context, argument || '', { ...options, mode: o.mode || 'auto', offset: o.offset, maxCandidates: o.candidates }).then(finish);
+    }
+    case 'ai-settings': {
+      const provider = require('./memory-ai-provider');
+      let patch = {};
+      if (o.stdin) {
+        const bytes = services.input ? services.input() : readNoteInput();
+        if (Buffer.byteLength(bytes) > 8192) throw new Error('AI settings input exceeds 8 KiB');
+        patch = JSON.parse(bytes);
+        if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('AI settings input must be a JSON object');
+      } else {
+        for (const key of ['semantic', 'summaries', 'automatic']) if (o[key] !== undefined) {
+          if (!['on', 'off'].includes(o[key])) throw new Error(`${key} must be on or off`);
+          patch[key] = o[key] === 'on';
+        }
+        if (o.provider || o.model) {
+          const previous = provider.readAISettings(context).provider;
+          patch.provider = { type: o.provider || previous?.type, ...(o.model ? { model: o.model } : {}) };
+        }
+      }
+      result = Object.keys(patch).length ? provider.configureAI(context, patch) : provider.readAISettings(context);
+      if (Object.keys(patch).length && result.automatic) (services.scheduleAI || require('./memory-ai-jobs').scheduleAI)(context);
+      break;
+    }
+    case 'ai-status': result = { settings: require('./memory-ai-provider').readAISettings(context), job: require('./memory-ai-jobs').jobStatus(context) }; break;
+    case 'summarize': return require('./memory-summary').summarizePending(context, { limit: o.limit, dryRun: !!o['dry-run'] }).then(finish);
     case 'timeline': result = { memories: store.timelineMemories(context, { id: argument, limit: o.limit || 10 }) }; break;
     case 'forget': result = store.forgetMemory(context, argument); break;
     case 'context': result = { context: runtime.buildContext(context, { query: o.query, maxChars: o.budget }) }; break;

@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "mem-mastero",
-      "version": "0.12.0",
+      "version": "0.13.0",
       "description": "Project knowledge, session sync, and verified Claude archives through private GitHub or Drive storage.",
       "source": "./",
       "category": "productivity"

@@ -133,7 +133,8 @@ try {
   // Installed stable scripts must ship their helper modules and work without the source checkout.
   assert.match(cli(['install-git-hooks']), /git hooks installed/);
   for (const name of ['sync.js', 'archive-state.js', 'archive-store.js', 'claude-files.js', 'archive.js', 'archive-graph.js', 'archive-recall.js', 'archive-access.js',
-    'memory-privacy.js', 'memory-store.js', 'memory-capture.js', 'memory-runtime.js', 'memory-import.js', 'memory-view.js', 'memory-command.js', 'memory-mcp.js', 'package.json']) {
+    'memory-privacy.js', 'memory-store.js', 'memory-capture.js', 'memory-runtime.js', 'memory-import.js', 'memory-view.js', 'memory-command.js', 'memory-mcp.js',
+    'memory-ai-provider.js', 'memory-semantic.js', 'memory-summary.js', 'memory-ai-jobs.js', 'memory-copilot-provider.js', 'package.json']) {
     assert(fs.existsSync(path.join(memRoot, name)), `installed stable script needs ${name}`);
   }
   const installedReport = JSON.parse(cli(['storage', '--json'], path.join(memRoot, 'sync.js')));

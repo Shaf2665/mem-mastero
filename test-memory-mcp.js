@@ -19,7 +19,7 @@ async function test() {
     assert.equal((await server.handle(init(version))).result.protocolVersion, VERSIONS.includes(version) ? version : VERSIONS[0]);
     assert.equal(await server.handle(notification), null);
     const listed = await server.handle(request('tools/list'));
-    assert.equal(listed.result.tools.length, 5);
+    assert.equal(listed.result.tools.length, 6);
     assert.equal(Boolean(listed.result.tools[0].annotations), version !== '2024-11-05');
     assert((await server.handle(init(version))).error, 'initialization cannot reset an existing server');
   }
@@ -101,7 +101,7 @@ async function test() {
     input: [init('2025-11-25'), notification, request('tools/list'), request('ping', {}, 3)].map(value => JSON.stringify(value)).join('\n') + '\n' });
   assert.equal(child.status, 0, child.stderr); assert.equal(child.stderr, '');
   const real = child.stdout.trim().split('\n').map(line => JSON.parse(line));
-  assert.equal(real.length, 3); assert.equal(real[1].result.tools.length, 5);
+  assert.equal(real.length, 3); assert.equal(real[1].result.tools.length, 6);
   console.log('Memory MCP tests passed');
 }
 test().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => {

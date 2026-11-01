@@ -1,6 +1,6 @@
 {
   "name": "mem-mastero",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "Project knowledge, cross-device coding-agent sessions, and verified Claude archives in storage you own.",
   "author": {
     "name": "Mohammed Shafiq",
@@ -24,7 +24,9 @@
   "mcpServers": {
     "mem-mastero-memory": {
       "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/memory-mcp.js"]
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/memory-mcp.js"
+      ]
     }
   }
 }

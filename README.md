@@ -10,7 +10,7 @@ Claude Code, Codex, Copilot CLI and Pi keep your chat history and memory **on th
 
 mem-mastero syncs that history through storage **you own**, either a **private GitHub repo** or **Google Drive**. It syncs through your agent's lifecycle hooks. With optional Git sync enabled, it also syncs when you `git push` and `git pull`.
 
-**New in v0.12:** searchable project notes, automatic assistant-observation capture, bounded Claude/Codex startup context, memory tools, an offline viewer, and selected-project import from Claude-Mem. Knowledge and session backups share your selected store. [Compare the capabilities and remaining gaps](docs/claude-mem-comparison.md).
+**New in v0.13:** meaning-based search and automatic source-linked summaries through your existing signed-in Codex, Claude Code, or Copilot CLI. No separate API key is required. AI features are optional; local keyword search, project notes, native session sync, and verified archives remain available. [Set up AI memory](docs/ai-memory.md) · [Compare the capabilities and remaining gaps](docs/claude-mem-comparison.md).
 
 ```bash
 npx github:Shaf2665/mem-mastero setup
@@ -127,7 +127,7 @@ Disabled Codex installations are left disabled and skipped. Pi updates cover its
 
 ## Project knowledge
 
-Session history preserves what happened. Project knowledge keeps small, searchable notes about what still matters: decisions, fixes, preferences, constraints, discoveries, progress, and summaries. Every note has a stable `memory:<hash>` ID, project/store scope, date, source, and provenance (`manual`, `captured`, or `imported`). The local knowledge store works offline after configuration; synchronization uses your selected private GitHub repository or Drive/folder store.
+Session history preserves what happened. Project knowledge keeps small, searchable notes about what still matters: decisions, fixes, preferences, constraints, discoveries, progress, and summaries. Every note has a stable `memory:<hash>` ID, project/store scope, date, source, and provenance (`manual`, `captured`, `imported`, or `generated`). The local knowledge store works offline after configuration; synchronization uses your selected private GitHub repository or Drive/folder store.
 
 Run these commands from a project with a Git `origin` remote and a configured memory store:
 
@@ -140,11 +140,29 @@ npx --yes github:Shaf2665/mem-mastero memory get memory:<hash>
 npx --yes github:Shaf2665/mem-mastero memory sync
 ```
 
-Replace `memory:<hash>` with an ID returned by search or add. Search returns a compact index; `get` reads a selected full note, and `timeline` shows neighboring notes. Search uses ranked keywords, with optional `--kind`, `--agent`, `--from`, `--to`, and `--limit` filters. It does not use embeddings, semantic matching, or a separate model service. `memory sync` synchronizes knowledge without copying native session files; normal agent sync also carries knowledge.
+Replace `memory:<hash>` with an ID returned by search or add. Search returns a compact index; `get` reads a selected full note, and `timeline` shows neighboring notes. Local keyword search supports `--kind`, `--agent`, `--from`, `--to`, and `--limit` filters. When configured, semantic AI can rank candidate memories by meaning and combine that ranking with keywords. `memory sync` synchronizes knowledge without copying native session files; normal agent sync also carries knowledge.
+
+### Use your existing signed-in AI client
+
+Update every device to **v0.13 or later before syncing generated summaries**, then choose an installed client that is already signed in:
+
+```bash
+npx --yes github:Shaf2665/mem-mastero memory ai-settings --provider codex --semantic on --summaries on --automatic on
+npx --yes github:Shaf2665/mem-mastero memory ai-status
+npx --yes github:Shaf2665/mem-mastero memory search "How do we stop failed requests repeating forever?" --mode hybrid
+npx --yes github:Shaf2665/mem-mastero memory summarize --dry-run
+npx --yes github:Shaf2665/mem-mastero memory summarize --limit 20
+```
+
+Choose `--provider claude` or `--provider copilot` for those clients. An optional `--model MODEL` selects a model supported by that client and account. Authentication stays with the installed client; no separate API key or OAuth token is saved in Mem-mastero configuration. These calls use the chosen account's allowance and data policies. AI configuration is local to this project/store and machine, and starts disabled.
+
+Semantic search is **bounded AI reranking, not an embedding index**. It reads limited excerpts from a candidate page; results report actual `coverage` and `nextOffset` for further pages. Provider failure falls back to keyword results. Use `--mode keyword` for a local-only search, or `--mode semantic` for AI-selected matches. [Setup, pagination, privacy, and limits](docs/ai-memory.md).
+
+Automatic summaries run in a separate worker, at most three batches per run with at least 60 seconds between attempt start times. Each batch covers at most 20 previously uncovered active memories. Generated summaries include source IDs and remain unverified model interpretations. Forgetting a source hides its dependent summaries; content-free receipts prevent a forgotten generated summary from being recreated by another device. Disable automatic work with `memory ai-settings --automatic off`.
 
 ### Capture and startup context
 
-Push hooks incrementally extract observations from supported assistant transcript messages when a transcript path/session can be resolved. User prompts and raw tool inputs/results are excluded from this derived-memory pipeline. Each pass reads at most 2 MiB and emits at most 20 bounded observations; later passes continue from the saved cursor. It extracts text rather than generating an AI summary, classifying every decision, or guaranteeing that every useful fact was found. A person or the active agent can save better, concise notes with `memory add` or `memory_save`.
+Push hooks incrementally extract observations from supported assistant transcript messages when a transcript path/session can be resolved. User prompts and raw tool inputs/results are excluded from this derived-memory pipeline. Each pass reads at most 2 MiB and emits at most 20 bounded observations; later passes continue from the saved cursor. Capture itself extracts text; optional AI summaries process those saved notes separately. Neither step guarantees that every useful fact was found. A person or the active agent can save concise notes with `memory add` or `memory_save`.
 
 Claude Code and Codex startup hooks supply a small local knowledge context, prioritizing durable note types, manual notes, and recency. The default budget is **4,000 characters**, adjustable from 512 to 12,000. Cached knowledge is emitted before cloud sync so a slow connection cannot delay that output. A device with no cached notes gets its context after the initial pull; search/get can read newly synced notes during the session. Copilot and Pi can use the CLI; automatic startup context for those clients is not included in this release.
 
@@ -162,7 +180,7 @@ Settings are local to this project/store on this machine. Resuming capture skips
 
 ### Agent tools and archive sources
 
-Claude Code and Copilot CLI plugin manifests register a local stdio MCP server with `memory_search`, `memory_timeline`, `memory_get`, `memory_save`, and `memory_forget`. Every call requires the **absolute `cwd` of the user's project**, so a long-running server can safely resolve different projects independently. Search/timeline are compact; get accepts up to ten selected IDs. Save can include `agent`, `sessionId`, `eventId`, and `archiveNode` provenance. The server performs no cloud operations and opens no HTTP listener.
+Claude Code and Copilot CLI plugin manifests register a local stdio MCP server with `memory_search`, `memory_timeline`, `memory_get`, `memory_save`, `memory_forget`, and `memory_summarize`. Every call requires the **absolute `cwd` of the user's project**, so a long-running server can safely resolve different projects independently. Search/timeline are compact; get accepts up to ten selected IDs. Save can include `agent`, `sessionId`, `eventId`, and `archiveNode` provenance. Configured semantic search and summarization invoke the selected signed-in client; the server itself opens no HTTP listener and does not download archives.
 
 Other MCP clients can launch `node /absolute/path/to/mem-mastero/memory-mcp.js` using their supported configuration. This release does not add an undocumented MCP field to the Codex manifest: Codex has the startup hooks and CLI, with manual MCP registration available through the client. The server implements MCP `2025-11-25` and the compatible `2025-06-18`, `2025-03-26`, and `2024-11-05` initialization protocols.
 
@@ -186,7 +204,7 @@ npx --yes github:Shaf2665/mem-mastero memory export --output ./knowledge-export.
 npx --yes github:Shaf2665/mem-mastero memory import ./knowledge-export.json
 ```
 
-Edit saves a replacement and forgets the old record. Forget creates a persistent marker that syncs with the knowledge store; stale peers and repeated imports cannot make that ID active again. **Forget is not secure erasure:** original sessions, existing exports/viewer snapshots, retained local record files, Git history, and unsynced copies can still contain the text. Mem-mastero-format imports must match the current project/store identity. Export/view commands refuse to overwrite an existing output file.
+Edit saves a replacement and forgets the old record. Forget creates a persistent marker that syncs with the knowledge store; stale peers and repeated imports cannot make that ID active again. Source-linked summaries and descendants are hidden when any source is forgotten or unavailable. Generated-summary deletion also preserves a content-free recipe receipt to prevent alternative wording from bypassing that deletion. **Forget is not secure erasure:** original sessions, existing exports/viewer snapshots, retained local record files, Git history, and unsynced copies can still contain the text. Mem-mastero-format imports must match the current project/store identity. Export/view commands refuse to overwrite an existing output file.
 
 For arbitrary note text, `memory add --stdin` and `memory edit ID --stdin` accept JSON with `kind`, `title`, `text`, `tags`, and `source`, avoiding shell interpolation. Notes are limited to 16 KiB of text; a collection allows up to 10,000 records and 64 MiB. The viewer's embedded data is capped at 16 MiB and shows at most 200 matches at a time.
 
@@ -248,7 +266,7 @@ Archives live on the `mem-mastero-archives-v1` branch in the selected private me
 
 Existing memory clones, their working files, Git history, and previous copies in the ordinary sync branch are retained. A fresh machine's ordinary Git clone can still download those legacy copies. Archive suppression prevents copying them into Claude's native history, and ordinary sync does not fetch payloads from the archive branch; recall or explicit restore fetches those on demand. The storage report includes legacy copies, so the reported archive saving covers native session files rather than all historical copies. Temporary upload and verification space is also required during an archive operation.
 
-GitHub API limits or incomplete archive listings stop the operation instead of guessing. Archive contents cannot be restored or recalled offline. Automatic retention, semantic search across conversation content, and cloud entries in Claude's native resume picker are not included.
+GitHub API limits or incomplete archive listings stop the operation instead of guessing. Archive contents cannot be restored or recalled offline. Automatic retention, semantic search directly across raw archived transcripts, and cloud entries in Claude's native resume picker are not included. Optional AI search operates on saved project knowledge.
 
 In Claude Code or Copilot CLI, `/mem-mastero:storage` shows the report. `/mem-mastero:archive` and `/mem-mastero:restore` help prepare the terminal commands; close Claude before running commands that remove or restore files.
 
@@ -389,7 +407,10 @@ Everything is available through `npx github:Shaf2665/mem-mastero <command>`. Aft
 | `status` | Show your stores, where the current repo's memory goes, and whether git sync is on |
 | `memory status` / `memory settings` | Show project knowledge counts and local capture/context controls |
 | `memory add --text TEXT [--kind KIND]` / `memory edit ID --text TEXT` | Save or correct a note; `--stdin` accepts JSON note fields |
-| `memory search [QUERY] [--limit N]` / `memory timeline [ID]` / `memory get ID` | Search compact keyword results, inspect neighboring notes, and read selected details |
+| `memory search [QUERY] [--mode keyword\|semantic\|hybrid]` / `memory timeline [ID]` / `memory get ID` | Search compact results with reported AI coverage, inspect neighboring notes, and read selected details |
+| `memory ai-settings --provider codex\|claude\|copilot --semantic on --summaries on --automatic on` | Configure the existing signed-in client for this project/store and machine |
+| `memory ai-status` | Show local AI settings and automatic summary progress |
+| `memory summarize [--dry-run] [--limit N]` | Preview or generate one source-linked AI summary from up to 20 active notes |
 | `memory forget ID` | Persistently exclude a note from active retrieval; does not erase historical copies |
 | `memory context [--query TEXT] [--budget CHARS]` | Build bounded local context using saved notes |
 | `memory sync` | Sync knowledge records and forget markers without native session files |
