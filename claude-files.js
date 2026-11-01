@@ -48,7 +48,7 @@ function classifyClaude(relative) {
 
 function classifyMem(relative) {
   const pieces = relative.split(path.sep);
-  if (pieces[0] === 'archive-cache' || pieces[0] === 'archive-staging') return 'archiveCache';
+  if (['archive-cache', 'archive-staging', 'recall-cache'].includes(pieces[0])) return 'archiveCache';
   if (pieces[0] === 'repo') return pieces[1] === '.git' ? 'memRepoGit' : 'memRepoWorkingTrees';
   if (pieces[0] === 'repos' && pieces.length >= 3) return pieces[2] === '.git' ? 'memRepoGit' : 'memRepoWorkingTrees';
   return 'otherMem';

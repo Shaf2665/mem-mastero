@@ -132,7 +132,7 @@ try {
 
   // Installed stable scripts must ship their helper modules and work without the source checkout.
   assert.match(cli(['install-git-hooks']), /git hooks installed/);
-  for (const name of ['sync.js', 'archive-state.js', 'archive-store.js', 'claude-files.js', 'archive.js', 'package.json']) {
+  for (const name of ['sync.js', 'archive-state.js', 'archive-store.js', 'claude-files.js', 'archive.js', 'archive-graph.js', 'archive-recall.js', 'archive-access.js', 'package.json']) {
     assert(fs.existsSync(path.join(memRoot, name)), `installed stable script needs ${name}`);
   }
   const installedReport = JSON.parse(cli(['storage', '--json'], path.join(memRoot, 'sync.js')));
@@ -140,7 +140,7 @@ try {
   assert.deepEqual(installedReport, sourceReport, 'installed helpers report the same actual fixture storage');
   assert.equal(git(project, ['config', '--global', '--get', 'core.hooksPath']).replace(/\\/g, '/'), path.join(memRoot, 'git-hooks').replace(/\\/g, '/'));
 
-  for (const args of [['archive', '--unknown'], ['archive', '--session', '../escape'], ['archive', '--older-than', '-1', '--dry-run'], ['restore'], ['restore', 'archived', '--revision', 'invalid'], ['storage', '--bad']]) {
+  for (const args of [['archive', '--unknown'], ['archive', '--session', '../escape'], ['archive', '--older-than', '-1', '--dry-run'], ['restore'], ['restore', 'archived', '--revision', 'invalid'], ['storage', '--bad'], ['graph', '--cleanup'], ['graph', '--query'], ['recall'], ['recall', '../escape'], ['recall', 'archived', '--offset', '-1'], ['recall', '--cleanup', 'archived']]) {
     const result = spawnSync(process.execPath, [sync, ...args], { env, cwd: project, encoding: 'utf8', windowsHide: true, timeout: 10000 });
     assert.equal(result.status, 1, `invalid CLI arguments must fail: ${args.join(' ')}`);
     assert.match(result.stderr, /Usage:/);

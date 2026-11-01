@@ -211,6 +211,7 @@ function archiveSession(session, context, deps) {
     deps.assertClaudeStopped(context);
     const staging = path.join(tmp, 'upload'); fs.mkdirSync(staging);
     const snapshot = stageSnapshot(session, context, staging);
+    const nodeId = require('./archive-graph').nodeId(context, session.sessionId, snapshot.revision);
     const descriptor = deps.backend.publishSnapshot({ projectId: context.projectId, sessionId: session.sessionId, revision: snapshot.revision, dir: staging });
     // Reuse temporary space for readback; never keep two compressed copies plus
     // a reconstructed transcript on the drive we are trying to free.
@@ -254,7 +255,7 @@ function archiveSession(session, context, deps) {
       catch (recovery) { throw new Error(`${error.message}. Remaining originals are in ${quarantine}. Close Claude and run archive --recover. ${recovery.message}`); }
       throw new Error(`${error.message}. Remaining local files restored; restore ${session.sessionId} recovers any already removed files from the verified cloud archive.`);
     }
-    return { sessionId: session.sessionId, revision: snapshot.revision, removedBytes, files: verified.files.length };
+    return { sessionId: session.sessionId, revision: snapshot.revision, nodeId, removedBytes, files: verified.files.length };
   });
 }
 
@@ -373,7 +374,7 @@ function runArchiveCommand(command, args, services) {
     for (const s of result.sessions) log(`  ${s.sessionId}: ${formatBytes(s.bytes)} (${s.files} files)`);
     log(`Dry run: ${result.sessions.length} candidate sessions, ${formatBytes(result.reclaimableBytes)}. No files removed; removal also requires Claude stopped and cloud verification.`);
   } else if (result.archived) {
-    for (const s of result.archived) log(`Archived and verified ${s.sessionId}; removed ${formatBytes(s.removedBytes)} of native files. Revision ${s.revision}`);
+    for (const s of result.archived) log(`Archived and verified ${s.sessionId}; removed ${formatBytes(s.removedBytes)} of native files. Revision ${s.revision}\nReference: ${s.nodeId}\nRead temporarily with: recall ${s.nodeId} --json`);
     if (!result.archived.length) log('No sessions matched the archive selection.');
   } else if (result.archives) {
     for (const s of result.archives) log(`${s.sessionId}  ${s.createdAt}  ${formatBytes(s.bytes)}  ${s.revision}`);

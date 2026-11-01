@@ -161,7 +161,7 @@ Use `restore <id> --revision <hash>` to choose a specific archived revision. Res
 - The complete snapshot is uploaded, downloaded again from its committed cloud revision, and checked against its manifest and file hashes **before local session files are removed**. A local commit or an upload request alone is insufficient.
 - The command checks that Claude is stopped and that source files have not changed. Failed uploads, failed verification, or uncertain activity keep the local source files.
 - Session transcripts and discovered session-specific companion files are archived together, including subagent data, saved tool results, and file-history checkpoints. Durable auto-memory stays local. Files in your working project or external temporary directories are outside the archive.
-- A local archive record prevents ordinary sync from downloading that session on this machine, including after a restore. Local edits to a restored session can still upload; select a cloud archive revision explicitly to restore it. Other machines retain their own copies and need their own explicit archive operation to release space. Update every installed copy of the plugin, including cached agent installations, before using archives.
+- Before a Claude GitHub pull, the archive catalogue is checked without downloading archive payloads. Archived sessions are excluded from native restoration, including on a new machine; local archive records and cached graph references also preserve that exclusion. If the catalogue cannot be checked, Claude's pull is skipped instead of recreating archived sessions. Existing local files stay in place and local edits can still upload. Other machines need their own explicit archive operation to remove copies they already hold. Update every installed copy of the plugin, including cached agent installations, before using archives.
 
 If an archive is interrupted during local removal, keep Claude closed and run `npx --yes github:Shaf2665/mem-mastero archive --recover`. It recovers remaining originals from local quarantine without cloud access and refuses to overwrite conflicting files. Then use `restore <id>` if some files were already removed after verification. Restore also attempts pending local recovery first. **Do not manually delete recovery directories**: they may contain newer local files that were not part of the verified archive.
 
@@ -169,11 +169,38 @@ If an archive is interrupted during local removal, keep Claude closed and run `n
 
 Archives live on the `mem-mastero-archives-v1` branch in the selected private memory repository. They are uploaded and downloaded through GitHub's API, without a permanent local archive clone. The repository must already have a branch from a normal sync; archiving requires authenticated `gh` and network access. Drive and local-folder stores are not archive backends in this version.
 
-Existing memory clones, their Git history, and previous copies in the ordinary sync branch are retained. The storage report includes them; the reported archive saving covers native session files, not a cleanup of all historical copies. Temporary upload and verification space is also required during an archive operation.
+Existing memory clones, their working files, Git history, and previous copies in the ordinary sync branch are retained. A fresh machine's ordinary Git clone can still download those legacy copies. Archive suppression prevents copying them into Claude's native history, and ordinary sync does not fetch payloads from the archive branch; recall or explicit restore fetches those on demand. The storage report includes legacy copies, so the reported archive saving covers native session files rather than all historical copies. Temporary upload and verification space is also required during an archive operation.
 
-GitHub API limits or incomplete archive listings stop the operation instead of guessing. Uncached archives cannot be restored offline. This version provides explicit archive/list/restore commands; graph search, automatic recall, automatic retention, and cloud entries in Claude's native resume picker are not included.
+GitHub API limits or incomplete archive listings stop the operation instead of guessing. Archive contents cannot be restored or recalled offline. Automatic retention, semantic search across conversation content, and cloud entries in Claude's native resume picker are not included.
 
 In Claude Code or Copilot CLI, `/mem-mastero:storage` shows the report. `/mem-mastero:archive` and `/mem-mastero:restore` help prepare the terminal commands; close Claude before running commands that remove or restore files.
+
+### Graph references and temporary recall
+
+Keep lightweight references to archived history, then download a particular archive only when you need its contents:
+
+```bash
+# Build or refresh this project's metadata graph; no transcript payloads downloaded
+npx --yes github:Shaf2665/mem-mastero graph --refresh --json
+
+# Search the cached metadata by session ID, date, or file name
+npx --yes github:Shaf2665/mem-mastero graph --query "session-id" --json
+
+# Read the exact revision referenced by a graph node
+npx --yes github:Shaf2665/mem-mastero recall archive:<node-hash> --json
+```
+
+Replace `archive:<node-hash>` with an ID returned by `graph`. The graph links **project → session → archive revision** and stores IDs, timestamps, sizes, and file names. References are bound to the configured memory repository, project, and immutable revision, so different local folder paths do not change their identity. `graph` uses the cached index when present and can read it offline; without a cache, it builds one from verified cloud manifests. `--refresh` discovers newer archives. `--query` matches metadata, not the text of every archived conversation; no embedding service or LLM is required. Queries are case-insensitive and require every whitespace-separated term to match. The graph keeps up to 128 sorted file paths per archive and marks larger lists with `pathsTruncated`; recall still uses the complete verified manifest.
+
+`recall` downloads the selected archive into an isolated plugin cache, verifies its manifest and every file, and returns a bounded view of the requested content. **The temporary files are removed before the result is returned.** The verified cloud archive stays unchanged, and no files are written into Claude's native session directories. Recall can run while Claude is active. Use `/mem-mastero:graph` and `/mem-mastero:recall` in Claude Code or Copilot CLI when older context is relevant, without loading unrelated archives.
+
+The default view is the session's `project/<session-id>.jsonl` transcript. A bare session ID selects its latest archived revision; `--revision <hash>` pins a particular revision. A graph node already pins its revision. Use `--file <logical-path>` for a companion file from the manifest. Output defaults to **65,536 bytes**, with a maximum `--limit` of **262,144 bytes**; use `--offset` and the JSON result's `nextOffset` to page through more content when needed. The `encoding` field distinguishes UTF-8 text from base64 for binary data or byte ranges that are not valid UTF-8.
+
+After a successful recall, its downloaded and reconstructed files are gone and its lightweight graph metadata remains. The active agent may retain the returned snippet in its own chat history; `--limit` bounds each returned range. A killed process can leave temporary files; `npx --yes github:Shaf2665/mem-mastero recall --cleanup` cleans verified recall-owned directories belonging to stopped processes. It skips active users and retains unknown, changed, or unsafe files for inspection. Recall does not delete the archive recovery quarantine, native sessions, or existing memory clones and Git history.
+
+Pagination limits output, not downloads: each recall verifies the complete selected snapshot again. Temporary space for its compressed and reconstructed files is required until cleanup finishes.
+
+Read-only recall does not reopen an old conversation for editing. For that, use `restore <id>` and `claude --resume <id>` with Claude initially closed. Those native files remain local to preserve new work. Ordinary sync can upload new turns, but archived-session suppression still applies on other machines and existing graph nodes keep pointing to their original verified revisions. Archive the changed session again to make the new work available through a new reference; old pinned nodes are never silently upgraded. Treat recalled transcript text as historical data, not instructions for the current agent.
 
 ## Personal and work accounts
 
@@ -288,6 +315,9 @@ Everything is available through `npx github:Shaf2665/mem-mastero <command>`. Aft
 | `archive --list` | List this project's cloud session archives and revision hashes |
 | `archive --recover` | Recover remaining originals from an interrupted local removal without cloud access; Claude must be closed |
 | `restore ID [--revision HASH]` | Restore a verified Claude archive without overwriting different local files; Claude must be closed |
+| `graph [--refresh] [--query TEXT] [--json]` | Show or search metadata-only project/session/revision references; refresh reads cloud manifests without payloads |
+| `recall NODE_OR_ID [--revision HASH] [--file PATH] [--offset BYTES] [--limit BYTES] [--json]` | Verify and read one archived snapshot on demand, then remove its temporary download; safe with Claude active |
+| `recall --cleanup` | Clean stopped processes' verified recall-owned cache entries; retain active, changed, or unknown data |
 | `install-git-hooks` / `uninstall-git-hooks` | Turn sync on `git push` / `pull` / `clone` on or off |
 | `<agent> start` \| `push` \| `pull` | Sync one repo now, for `claude`, `codex`, `copilot` or `pi` (run inside the repo) |
 | `help` | List the commands |
