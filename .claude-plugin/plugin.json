@@ -1,7 +1,7 @@
 {
   "name": "mem-mastero",
-  "version": "0.11.0",
-  "description": "Sync coding-agent sessions and memory for each repo across machines via your Google Drive or a private GitHub repo.",
+  "version": "0.12.0",
+  "description": "Project knowledge, cross-device coding-agent sessions, and verified Claude archives in storage you own.",
   "author": {
     "name": "Mohammed Shafiq",
     "url": "https://github.com/Shaf2665"
@@ -20,5 +20,11 @@
     "copilot",
     "pi"
   ],
-  "commands": "./commands/"
+  "commands": "./commands/",
+  "mcpServers": {
+    "mem-mastero-memory": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/memory-mcp.js"]
+    }
+  }
 }

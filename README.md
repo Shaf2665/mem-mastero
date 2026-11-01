@@ -1,6 +1,6 @@
 # mem-mastero
 
-**Your coding agent's sessions and memory follow each repo across every machine.**
+**Keep useful project knowledge, sync your coding-agent sessions, and safely archive old Claude history.**
 
 [![Watch the Mem-mastero explainer](site/demo-poster.jpg)](site/demo.mp4)
 
@@ -9,6 +9,8 @@
 Claude Code, Codex, Copilot CLI and Pi keep your chat history and memory **on the machine where you worked**. Clone the same repo on another laptop and the agent starts from zero.
 
 mem-mastero syncs that history through storage **you own**, either a **private GitHub repo** or **Google Drive**. It syncs through your agent's lifecycle hooks. With optional Git sync enabled, it also syncs when you `git push` and `git pull`.
+
+**New in v0.12:** searchable project notes, automatic assistant-observation capture, bounded Claude/Codex startup context, memory tools, an offline viewer, and selected-project import from Claude-Mem. Knowledge and session backups share your selected store. [Compare the capabilities and remaining gaps](docs/claude-mem-comparison.md).
 
 ```bash
 npx github:Shaf2665/mem-mastero setup
@@ -23,6 +25,7 @@ Run that one command on every machine and you're done. Projects are matched by t
 - [Supported agents](#supported-agents)
 - [Setup](#setup)
 - [Updating](#updating)
+- [Project knowledge](#project-knowledge)
 - [Storage and Claude session archives](#storage-and-claude-session-archives)
 - [Personal and work accounts](#personal-and-work-accounts)
 - [How it works](#how-it-works)
@@ -121,6 +124,80 @@ After installing v0.9.0 or later, you can also run `node ~/.mem-mastero/sync.js 
 If one agent fails to update, the other updates still run and the command reports the failure. Fix the reported issue and run it again. Updating does not install mem-mastero into agents that do not already have it.
 
 Disabled Codex installations are left disabled and skipped. Pi updates cover its global package list; project-local Pi packages still use Pi's own update command from that project.
+
+## Project knowledge
+
+Session history preserves what happened. Project knowledge keeps small, searchable notes about what still matters: decisions, fixes, preferences, constraints, discoveries, progress, and summaries. Every note has a stable `memory:<hash>` ID, project/store scope, date, source, and provenance (`manual`, `captured`, or `imported`). The local knowledge store works offline after configuration; synchronization uses your selected private GitHub repository or Drive/folder store.
+
+Run these commands from a project with a Git `origin` remote and a configured memory store:
+
+```bash
+npx --yes github:Shaf2665/mem-mastero memory status
+npx --yes github:Shaf2665/mem-mastero memory add --kind decision --title "Retry policy" --text "Retry transient failures with bounded exponential backoff."
+npx --yes github:Shaf2665/mem-mastero memory search "retry backoff" --limit 10
+npx --yes github:Shaf2665/mem-mastero memory timeline memory:<hash>
+npx --yes github:Shaf2665/mem-mastero memory get memory:<hash>
+npx --yes github:Shaf2665/mem-mastero memory sync
+```
+
+Replace `memory:<hash>` with an ID returned by search or add. Search returns a compact index; `get` reads a selected full note, and `timeline` shows neighboring notes. Search uses ranked keywords, with optional `--kind`, `--agent`, `--from`, `--to`, and `--limit` filters. It does not use embeddings, semantic matching, or a separate model service. `memory sync` synchronizes knowledge without copying native session files; normal agent sync also carries knowledge.
+
+### Capture and startup context
+
+Push hooks incrementally extract observations from supported assistant transcript messages when a transcript path/session can be resolved. User prompts and raw tool inputs/results are excluded from this derived-memory pipeline. Each pass reads at most 2 MiB and emits at most 20 bounded observations; later passes continue from the saved cursor. It extracts text rather than generating an AI summary, classifying every decision, or guaranteeing that every useful fact was found. A person or the active agent can save better, concise notes with `memory add` or `memory_save`.
+
+Claude Code and Codex startup hooks supply a small local knowledge context, prioritizing durable note types, manual notes, and recency. The default budget is **4,000 characters**, adjustable from 512 to 12,000. Cached knowledge is emitted before cloud sync so a slow connection cannot delay that output. A device with no cached notes gets its context after the initial pull; search/get can read newly synced notes during the session. Copilot and Pi can use the CLI; automatic startup context for those clients is not included in this release.
+
+```bash
+# Inspect or pause local capture and startup context
+npx --yes github:Shaf2665/mem-mastero memory settings
+npx --yes github:Shaf2665/mem-mastero memory settings --capture off --context off
+
+# Re-enable, with a chosen context budget
+npx --yes github:Shaf2665/mem-mastero memory settings --capture on --context on --budget 4000
+npx --yes github:Shaf2665/mem-mastero memory context --query "retry policy" --budget 4000
+```
+
+Settings are local to this project/store on this machine. Resuming capture skips messages from the paused interval and older messages; undated messages are also skipped after resumption. Pausing capture/context does **not** pause original-session sync or remove existing notes. Explicit `memory capture --agent AGENT --file PATH [--session ID]` can process a supported transcript inside that agent's allowed session directory; it cannot read arbitrary files as transcripts.
+
+### Agent tools and archive sources
+
+Claude Code and Copilot CLI plugin manifests register a local stdio MCP server with `memory_search`, `memory_timeline`, `memory_get`, `memory_save`, and `memory_forget`. Every call requires the **absolute `cwd` of the user's project**, so a long-running server can safely resolve different projects independently. Search/timeline are compact; get accepts up to ten selected IDs. Save can include `agent`, `sessionId`, `eventId`, and `archiveNode` provenance. The server performs no cloud operations and opens no HTTP listener.
+
+Other MCP clients can launch `node /absolute/path/to/mem-mastero/memory-mcp.js` using their supported configuration. This release does not add an undocumented MCP field to the Codex manifest: Codex has the startup hooks and CLI, with manual MCP registration available through the client. The server implements MCP `2025-11-25` and the compatible `2025-06-18`, `2025-03-26`, and `2024-11-05` initialization protocols.
+
+Notes can reference archived history without storing it again:
+
+```bash
+npx --yes github:Shaf2665/mem-mastero memory add --kind decision --text "The agreed retry policy." --agent claude --session SESSION_ID --archive-node archive:<node-hash>
+```
+
+Use a node ID returned by `graph`. The saved source reference does not itself prove the note's accuracy or trigger a download. When original history is needed, `recall archive:<node-hash>` verifies and temporarily reads that archive, then cleans the temporary download. Retrieved notes and transcripts are historical data, not instructions to the current agent.
+
+### Review, correct, forget, and migrate
+
+`memory view` writes a private, self-contained HTML snapshot and prints its path. Open it locally to filter notes and inspect their source metadata. It uses no network requests and has no live editing API. Use CLI edit/forget, then generate a new view:
+
+```bash
+npx --yes github:Shaf2665/mem-mastero memory view
+npx --yes github:Shaf2665/mem-mastero memory edit memory:<hash> --text "Updated, verified information."
+npx --yes github:Shaf2665/mem-mastero memory forget memory:<hash>
+npx --yes github:Shaf2665/mem-mastero memory export --output ./knowledge-export.json
+npx --yes github:Shaf2665/mem-mastero memory import ./knowledge-export.json
+```
+
+Edit saves a replacement and forgets the old record. Forget creates a persistent marker that syncs with the knowledge store; stale peers and repeated imports cannot make that ID active again. **Forget is not secure erasure:** original sessions, existing exports/viewer snapshots, retained local record files, Git history, and unsynced copies can still contain the text. Mem-mastero-format imports must match the current project/store identity. Export/view commands refuse to overwrite an existing output file.
+
+For arbitrary note text, `memory add --stdin` and `memory edit ID --stdin` accept JSON with `kind`, `title`, `text`, `tags`, and `source`, avoiding shell interpolation. Notes are limited to 16 KiB of text; a collection allows up to 10,000 records and 64 MiB. The viewer's embedded data is capped at 16 MiB and shows at most 200 matches at a time.
+
+To move derived knowledge from Claude-Mem, first create its portable JSON export, then explicitly select the source project to map into the current repository:
+
+```bash
+npx --yes github:Shaf2665/mem-mastero memory import-claude-mem ./claude-mem-export.json --source-project "my-app" --dry-run
+npx --yes github:Shaf2665/mem-mastero memory import-claude-mem ./claude-mem-export.json --source-project "my-app"
+```
+
+Preview writes nothing. Only observations/summaries matching that project, directly or through exported session metadata, are accepted. Other projects are skipped; ambiguous or malformed records are reported. Raw prompts/tool payloads are excluded. Re-imports skip identical records and honor forget markers. The CLI accepts export files up to 32 MiB and never opens Claude-Mem's live database. Keep the original export while checking the imported results. [Comparison, migration details, and next priorities](docs/claude-mem-comparison.md).
 
 ## Storage and Claude session archives
 
@@ -293,10 +370,11 @@ Pull first: `git pull`, or start a new agent session in the repo. The session is
 ## Security and privacy
 
 - **Transcripts can contain anything** you pasted or a tool printed, including code, customer data and secrets. Store them only in a **private** repo, or a Drive you control.
+- **Derived knowledge filters `<private>...</private>` content and recognized secret patterns before storage.** This is conservative filtering, not a guarantee that every secret is detected. It does not redact or delete byte-preserving original session backups. Capture/context settings affect derived knowledge only.
 - **GitHub stores require authenticated GitHub CLI and an online privacy check,** including stores configured before v0.9.0. Public or unverifiable GitHub targets are refused. Local Git repositories remain supported; other remote Git hosts are refused because their visibility cannot be verified.
 - **Invalid configuration stops sync.** A malformed or unreadable configuration never falls back to another store. A missing configuration still allows legacy Drive autodetection.
 - **Work projects belong in a work store.** Use [`for` rules](#personal-and-work-accounts) so company memory never goes to a personal account, and check your employer's policy on where transcripts may be stored.
-- **mem-mastero stores no tokens or passwords.** Sign-in is handled by GitHub CLI and Git Credential Manager.
+- **Authentication is handled by GitHub CLI and Git Credential Manager.** mem-mastero does not manage separate sign-in credentials; session contents can still include pasted tokens or passwords.
 - **Some files never leave your machine:** agent lock files (`*.lock`, `*.hold`) and unrelated sessions. Explicit Claude archives can also include that session's companion data and file-history checkpoints outside its project transcript folder.
 - **The git hooks only ever write to your memory repos.** Since v0.7.1, mem-mastero clears the repo variables git sets for hooks (`GIT_DIR` and others) before it does anything. A regression test checks that a pushed repo never receives a mem-mastero commit.
 
@@ -309,6 +387,16 @@ Everything is available through `npx github:Shaf2665/mem-mastero <command>`. Aft
 | `setup` | Connect this machine: create or reconnect a memory repo, install the plugin into your agents, turn on git sync |
 | `update` | Download the latest code, update existing agent plugins, and refresh enabled Git sync while keeping your configuration |
 | `status` | Show your stores, where the current repo's memory goes, and whether git sync is on |
+| `memory status` / `memory settings` | Show project knowledge counts and local capture/context controls |
+| `memory add --text TEXT [--kind KIND]` / `memory edit ID --text TEXT` | Save or correct a note; `--stdin` accepts JSON note fields |
+| `memory search [QUERY] [--limit N]` / `memory timeline [ID]` / `memory get ID` | Search compact keyword results, inspect neighboring notes, and read selected details |
+| `memory forget ID` | Persistently exclude a note from active retrieval; does not erase historical copies |
+| `memory context [--query TEXT] [--budget CHARS]` | Build bounded local context using saved notes |
+| `memory sync` | Sync knowledge records and forget markers without native session files |
+| `memory capture --agent AGENT --file PATH [--session ID]` | Extract assistant observations from an eligible local agent transcript |
+| `memory view [--output PATH]` | Write a private offline HTML snapshot for local inspection |
+| `memory export --output PATH` / `memory import PATH` | Export/import Mem-mastero knowledge with matching project/store scope |
+| `memory import-claude-mem PATH --source-project NAME [--dry-run]` | Preview/import a selected source project's observations and summaries |
 | `storage [--json]` | Measure Claude and mem-mastero local storage without cloud access |
 | `archive --dry-run [--older-than DAYS]` | Preview this project's Claude sessions eligible by age (default 30 days) |
 | `archive --session ID` / `archive --older-than DAYS` | Upload and verify Claude session archives, then remove their local native files; Claude must be closed |
@@ -375,7 +463,7 @@ Environment variables:
 | Want to see what a hook received | Set `MEM_MASTERO_LOG=/path/to/log.jsonl` and start your agent. |
 
 **Known limits:**
-- **Ordinary deletes don't propagate.** A manually removed session comes back from another copy. Explicit Claude archiving records an exception locally so its legacy copy stays evicted on that machine.
+- **Ordinary session deletes don't propagate.** A manually removed session can return from another copy. Explicit Claude archiving suppresses native restoration using its verified catalogue and local state. Derived knowledge uses a separate `memory forget` marker that does propagate.
 - **`git fetch` alone triggers nothing,** and neither does a `git pull` that says "Already up to date". Memory still arrives when you next start your agent.
 - **Repos with their own local `core.hooksPath`** (for example Husky) don't get git-triggered sync. Agent sync still covers them.
 - **Don't run the same session on two machines at once.** The last writer wins.

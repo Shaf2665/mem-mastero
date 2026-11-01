@@ -18,7 +18,9 @@ try {
   for (const args of [
     ['test.js'], ['test-integrity.js'], ['test-privacy.js'], ['test-recovery.js'], ['test-update.js'],
     ['test-claude-files.js'], ['test-archive-store.js'], ['test-archive.js'], ['test-archive-adversarial.js'], ['test-archive-sync.js'],
-    ['test-archive-graph.js'], ['test-archive-recall.js'], ['test-archive-access.js'], ['.github/announce.js', '--test'],
+    ['test-archive-graph.js'], ['test-archive-recall.js'], ['test-archive-access.js'],
+    ['test-memory-store.js'], ['test-memory-capture.js'], ['test-memory-mcp.js'], ['test-memory-import.js'],
+    ['test-memory-runtime.js'], ['test-memory-integration.js'], ['.github/announce.js', '--test'],
   ]) {
     console.log(`Testing ${args[0]}`);
     const result = spawnSync(process.execPath, args, { cwd: __dirname, env, stdio: ['ignore', 'inherit', 'inherit'], timeout: 180000 });

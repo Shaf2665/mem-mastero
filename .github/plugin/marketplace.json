@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "mem-mastero",
-  "description": "Cross-device Claude Code memory and sessions via Google Drive.",
+  "description": "Project knowledge and coding-agent session sync through storage you own.",
   "owner": {
     "name": "Mohammed Shafiq",
     "url": "https://github.com/Shaf2665"
@@ -9,7 +9,8 @@
   "plugins": [
     {
       "name": "mem-mastero",
-      "description": "Sync sessions and memory for each repo through Google Drive.",
+      "version": "0.12.0",
+      "description": "Project knowledge, session sync, and verified Claude archives through private GitHub or Drive storage.",
       "source": "./",
       "category": "productivity",
       "hooks": "hooks/copilot-hooks.json"

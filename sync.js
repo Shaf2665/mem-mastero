@@ -475,7 +475,54 @@ function readStdin() {
 }
 
 // Sync the given agents for one repo. mode: start (pull+push), push, pull. loud: always print the summary.
+// Resolve project knowledge locally, including while the cloud is unavailable.
+// MCP may serve many repositories in one process, so never cache this identity.
+function resolveMemoryContext(cwd) {
+  if (typeof cwd !== 'string' || !path.isAbsolute(cwd)) throw new Error('Memory requires an absolute project cwd');
+  cwd = path.resolve(cwd);
+  const env = { ...process.env };
+  for (const key of GIT_LOCAL_ENV) delete env[key];
+  let projectId;
+  try {
+    projectId = normalizeRemote(execFileSync('git', ['-C', cwd, 'remote', 'get-url', 'origin'], {
+      env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, timeout: 10000,
+    }));
+  } catch { throw new Error('Run memory commands inside a project with a git origin remote'); }
+  if (!projectId) throw new Error('Project origin is empty');
+  let store = pickStore(readConfig(), projectId);
+  if (!store) throw new Error('This project matches no configured memory store');
+  if (!store.github) {
+    const dir = store.dir || driveRoot({});
+    if (!dir) throw new Error('Configure a memory store with mem-mastero setup first');
+    store = { dir: path.resolve(dir) };
+  }
+  return { cwd, memRoot: BASE(), projectId, store };
+}
+
 function run(names, mode, input, loud = mode === 'start') {
+  const cwd = path.resolve(input.cwd || process.cwd());
+  let context, contextEmitted = false;
+  try {
+    context = resolveMemoryContext(cwd);
+    require('./memory-runtime').captureHook(context, names, input, cwd, mode);
+  } catch (e) { if (context) console.error(`mem-mastero memory capture: ${e.message}`); }
+  if (mode === 'start' && context) try {
+    // Print existing knowledge before a slow cloud operation can use up the
+    // host's hook budget. Search/get see newly synced records after sync ends.
+    const text = require('./memory-runtime').buildContext(context, { onlyIfRecords: true });
+    if (text) { console.log(text); contextEmitted = true; }
+  } catch (e) { console.error(`mem-mastero memory context: ${e.message}`); }
+  try { return runSessions(names, mode, input, loud); }
+  finally {
+    // A first device with no cached notes receives its newly pulled knowledge.
+    if (mode === 'start' && context && !contextEmitted) try {
+      const text = require('./memory-runtime').buildContext(context);
+      if (text) console.log(text);
+    } catch (e) { console.error(`mem-mastero memory context: ${e.message}`); }
+  }
+}
+
+function runSessions(names, mode, input, loud = mode === 'start', strict = false) {
   const cfg = readConfig();
   const cwd = input.cwd || process.cwd();
   const say = msg => { if (loud || process.stdout.isTTY) console.log(`mem-mastero: ${msg}`); };
@@ -490,8 +537,13 @@ function run(names, mode, input, loud = mode === 'start') {
   if (!root) return say('no sync target. Run `npx github:Shaf2665/mem-mastero setup` (or install Google Drive for Desktop). Sync skipped.');
   if (mode === 'start' && fs.existsSync(path.join(BASE(), 'git-hooks'))) refreshHookScript();
 
+  let knowledgeResult;
   const work = () => {
     if (github) exactEol(root);
+    const knowledge = require('./memory-store');
+    const context = { memRoot: BASE(), projectId: id, store: github ? store : { dir: path.resolve(root) } };
+    const knowledgeDir = require('./archive-state').safePath(path.resolve(root), path.join('knowledge', 'v1', sha256(Buffer.from(id))));
+    knowledgeResult = mode === 'pull' ? { pushed: 0 } : knowledge.syncMemories(context, knowledgeDir, { mode: 'push' });
     const jobs = names.map(name => {
       const agent = AGENTS[name];
       const c = { input, cwd, id, mode, local: agent.local(input, cwd), remote: path.join(root, ...agent.remote(id)) };
@@ -503,6 +555,10 @@ function run(names, mode, input, loud = mode === 'start') {
       if (mode === 'push') {
         spawn(process.execPath, [__filename, 'gitpush', root], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
       } else pullPush(root); // git rewrites mtimes of files it updates, so they count as newer than local
+    }
+    if (mode !== 'push') {
+      const incoming = knowledge.syncMemories(context, knowledgeDir, { mode: 'pull' });
+      knowledgeResult = { ...incoming, pushed: knowledgeResult.pushed };
     }
     for (const { name, c, pushed } of jobs) {
       let pulled = [];
@@ -534,7 +590,11 @@ function run(names, mode, input, loud = mode === 'start') {
     lock = path.join(locks, sha256(Buffer.from(key)) + '.lock');
   }
   const coordinated = () => names.includes('claude') ? require('./archive-state').withArchiveLock(BASE(), work) : work();
-  if (!withLock(root, coordinated, lock)) say('another sync is still running; skipped this one (the next sync catches up).');
+  if (!withLock(root, coordinated, lock)) {
+    if (strict) throw new Error('Another sync is still running; retry memory sync later');
+    say('another sync is still running; skipped this one (the next sync catches up).');
+  }
+  return knowledgeResult;
 }
 
 // --- Git hooks: sync with `git push` / `git pull` / `git clone` in every repo, for every agent.
@@ -552,7 +612,8 @@ const globalGit = (...args) => { try { return execFileSync('git', ['config', '--
 // Hooks call a stable copy of this script, so plugin updates (new cache paths) don't break them.
 function refreshHookScript() {
   // Publish helpers first so a newly installed dispatcher never sees missing modules.
-  for (const name of ['archive-state.js', 'archive-store.js', 'claude-files.js', 'archive.js', 'archive-graph.js', 'archive-recall.js', 'archive-access.js', 'package.json', 'sync.js']) {
+  for (const name of ['archive-state.js', 'archive-store.js', 'claude-files.js', 'archive.js', 'archive-graph.js', 'archive-recall.js', 'archive-access.js',
+    'memory-privacy.js', 'memory-store.js', 'memory-capture.js', 'memory-runtime.js', 'memory-import.js', 'memory-view.js', 'memory-command.js', 'memory-mcp.js', 'package.json', 'sync.js']) {
     const dst = path.join(BASE(), name), source = fs.readFileSync(path.join(path.dirname(__filename), name));
     try { if (fs.readFileSync(dst).equals(source)) continue; } catch {}
     atomicWrite(dst, source);
@@ -856,7 +917,7 @@ function archivePullState(context, backend) {
   return state;
 }
 
-module.exports = { syncDir, syncFile, readWhole, atomicWrite, normalizeRemote, headCwd, AGENTS, matches, pickStore, storesOf, withLock, archivePullState };
+module.exports = { syncDir, syncFile, readWhole, atomicWrite, normalizeRemote, headCwd, AGENTS, matches, pickStore, storesOf, withLock, archivePullState, resolveMemoryContext };
 
 // Git runs hooks with repo-local variables (GIT_DIR, GIT_INDEX_FILE, ...) pointing at the repo being pushed.
 // Inherited, they would aim every git call here, including commit/push of the memory repo, at *that* repo
@@ -868,6 +929,15 @@ const GIT_LOCAL_ENV = ['GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_CONFIG', 'GIT_CO
 if (require.main === module) {
   for (const k of GIT_LOCAL_ENV) delete process.env[k];
   const [a, b, ...rest] = process.argv.slice(2);
+  if (a === 'memory') {
+    try {
+      require('./memory-command').runMemoryCommand(process.argv.slice(3), {
+        context: () => resolveMemoryContext(process.cwd()),
+        sync: context => runSessions([], 'start', { cwd: context.cwd }, false, true),
+      });
+    } catch (e) { console.error(`mem-mastero memory: ${e.message}`); process.exitCode = 1; }
+    return;
+  }
   if (['storage', 'archive', 'restore', 'graph', 'recall'].includes(a)) {
     try {
       const runCommand = ['graph', 'recall'].includes(a) ? require('./archive-access').runAccessCommand : require('./archive').runArchiveCommand;
@@ -899,6 +969,10 @@ if (require.main === module) {
   setup                  connect this machine (create or reconnect a memory repo, personal or work)
   update                 update installed plugins and the Git-hook script; keep your stores
   status                 show your stores and where this repo's memory goes
+  memory status          show saved project knowledge and local capture/context settings
+  memory search QUERY    find decisions, fixes and preferences (also timeline/get/add/edit/forget)
+  memory sync            sync project knowledge now, without native session files
+  memory view            generate a private offline knowledge viewer
   storage [--json]        measure local Claude and mem-mastero storage
   archive --dry-run       preview inactive Claude sessions older than 30 days
   archive --session ID    upload, verify, then remove one stopped Claude session

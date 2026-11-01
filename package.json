@@ -1,8 +1,8 @@
 {
   "name": "mem-mastero",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "private": true,
-  "description": "Sync coding-agent sessions and memory for each repo across machines via your Google Drive or a private GitHub repo.",
+  "description": "Project knowledge, cross-device coding-agent sessions, and verified Claude archives in storage you own.",
   "keywords": [
     "pi-package"
   ],

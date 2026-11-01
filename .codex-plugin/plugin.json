@@ -1,7 +1,7 @@
 {
   "name": "mem-mastero",
-  "version": "0.11.0",
-  "description": "Sync coding-agent sessions and memory for each repo across machines via your Google Drive or a private GitHub repo.",
+  "version": "0.12.0",
+  "description": "Project knowledge, cross-device coding-agent sessions, and verified Claude archives in storage you own.",
   "author": {
     "name": "Mohammed Shafiq",
     "url": "https://github.com/Shaf2665"
@@ -22,8 +22,8 @@
   "hooks": "./hooks/codex-hooks.json",
   "interface": {
     "displayName": "mem-mastero",
-    "shortDescription": "Sync sessions across machines",
-    "longDescription": "Sync coding-agent sessions and memory for each repo across machines via your Google Drive or a private GitHub repo.",
+    "shortDescription": "Project knowledge and session sync",
+    "longDescription": "Save and retrieve project knowledge, sync coding-agent sessions across machines, and safely archive Claude history in storage you own.",
     "developerName": "Mohammed Shafiq",
     "category": "Productivity",
     "capabilities": [

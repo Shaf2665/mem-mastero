@@ -85,6 +85,7 @@ vm.runInNewContext('(function () {\n' + source + `
   repoId = () => 'github.com/example/project';
   pickStore = () => ({ github: 'https://github.com/example/private-memory.git' });
   storeRoot = () => '/isolated-memory';
+  resolveMemoryContext = () => { throw new Error('No local knowledge in this fixture'); };
   exactEol = () => {};
   withLock = (dir, fn) => { fn(); return true; };
   commit = () => recordCommit();
@@ -94,12 +95,13 @@ vm.runInNewContext('(function () {\n' + source + `
   atomicWrite = recordError;
   module.exports.pullPush = pullPush;
 })()`, {
-  module: moduleFixture, __filename: path.join(__dirname, 'sync.js'), console,
+  module: moduleFixture, __filename: path.join(__dirname, 'sync.js'), console, Buffer,
   process: { ...process, env: {}, stdout: { isTTY: false } },
   recordCommit: () => { commits++; },
   checkPrivacy: store => { if (store.github.includes('public-memory')) throw new Error('public memory store'); },
   recordError: () => { errors++; },
-  require: name => name === 'fs' ? { ...fs, rmSync: () => { cleared++; } } : name === 'child_process' ? {
+  require: name => name === './memory-store' ? { syncMemories: () => ({ pushed: 0, pulled: 0 }) }
+    : name === 'fs' ? { ...fs, rmSync: () => { cleared++; } } : name === 'child_process' ? {
     ...require(name), execFileSync: (cmd, args) => mockGit(args[1], ...args.slice(8)),
     spawn: () => { uploads++; return { unref() {} }; },
   } : require(name),
