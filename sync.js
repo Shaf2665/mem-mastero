@@ -335,7 +335,7 @@ function storeRoot(s, { clone = true } = {}) {
   }
   if (clone && !fs.existsSync(path.join(dir, '.git'))) {
     fs.mkdirSync(path.dirname(dir), { recursive: true });
-    execFileSync('git', ['clone', '-q', '-c', 'core.autocrlf=false', s.github, dir], { stdio: 'ignore', env: GIT_ENV() });
+    execFileSync('git', ['clone', '-q', '--single-branch', '--no-tags', '-c', 'core.autocrlf=false', s.github, dir], { stdio: 'ignore', env: GIT_ENV() });
   }
   return dir;
 }
@@ -438,6 +438,14 @@ function commit(dir) {
 }
 
 // Same file edited on two machines: -X theirs keeps the commit being replayed, i.e. this machine's copy.
+function syncBranch(dir) {
+  const branch = git(dir, 'symbolic-ref', '--quiet', '--short', 'HEAD').trim();
+  if (!branch || branch === 'mem-mastero-archives-v1') throw new Error('normal memory sync needs its own branch; refusing to sync the archive branch');
+  // Fetch only the working branch. A wildcard fetch would download cold archive blobs into .git.
+  git(dir, 'config', '--replace-all', 'remote.origin.fetch', `+refs/heads/${branch}:refs/remotes/origin/${branch}`);
+  return branch;
+}
+
 function pullPush(dir) {
   const errorFile = path.join(dir, '.git', 'mem-mastero-error');
   try {
@@ -445,7 +453,8 @@ function pullPush(dir) {
     for (const url of git(dir, 'remote', 'get-url', '--push', '--all', 'origin').trim().split(/\r?\n/)) {
       ensurePrivateStore({ github: url });
     }
-    try { git(dir, 'pull', '-q', '--rebase', '-X', 'theirs'); } catch { // empty remote, offline, or unresolvable rebase
+    const branch = syncBranch(dir);
+    try { git(dir, 'pull', '-q', '--no-tags', '--rebase', '-X', 'theirs', 'origin', branch); } catch { // empty remote, offline, or unresolvable rebase
       try { git(dir, 'rebase', '--abort'); } catch {}
     }
     git(dir, 'push', '-q', '-u', 'origin', 'HEAD');
@@ -496,7 +505,14 @@ function run(names, mode, input, loud = mode === 'start') {
       } else pullPush(root); // git rewrites mtimes of files it updates, so they count as newer than local
     }
     for (const { name, c, pushed } of jobs) {
-      const pulled = mode === 'push' ? [] : syncDir(c.remote, c.local, false);
+      let pulled = [];
+      if (mode !== 'push') {
+        if (name === 'claude' && github) {
+          const archives = require('./archive-state');
+          const state = archives.readState({ memRoot: BASE(), claudeRoot: home('CLAUDE_CONFIG_DIR', '.claude'), projectDir: c.local, projectId: id, store });
+          pulled = walk(c.remote).filter(r => !archives.excludedFromPull(r, state) && syncFile(path.join(c.remote, r), path.join(c.local, r), false));
+        } else pulled = syncDir(c.remote, c.local, false);
+      }
       if (loud && mode !== 'start' && !pulled.length && !pushed.length) continue;
       say(`${name} ${id} (${github ? 'GitHub' : 'Drive'}${storesOf(cfg).length > 1 ? ` → ${storeName(store)}` : ''}): pulled ${pulled.length}, pushed ${pushed.length} file(s).`);
       // Claude may have loaded MEMORY.md before this hook ran, so hand the fresh copy to the session directly.
@@ -513,7 +529,8 @@ function run(names, mode, input, loud = mode === 'start') {
     const key = process.platform === 'win32' ? path.resolve(root).toLowerCase() : path.resolve(root);
     lock = path.join(locks, sha256(Buffer.from(key)) + '.lock');
   }
-  if (!withLock(root, work, lock)) say('another sync is still running; skipped this one (the next sync catches up).');
+  const coordinated = () => names.includes('claude') ? require('./archive-state').withArchiveLock(BASE(), work) : work();
+  if (!withLock(root, coordinated, lock)) say('another sync is still running; skipped this one (the next sync catches up).');
 }
 
 // --- Git hooks: sync with `git push` / `git pull` / `git clone` in every repo, for every agent.
@@ -530,10 +547,12 @@ const globalGit = (...args) => { try { return execFileSync('git', ['config', '--
 
 // Hooks call a stable copy of this script, so plugin updates (new cache paths) don't break them.
 function refreshHookScript() {
-  const dst = path.join(BASE(), 'sync.js');
-  const source = fs.readFileSync(__filename);
-  try { if (fs.readFileSync(dst).equals(source)) return; } catch {}
-  atomicWrite(dst, source);
+  // Publish helpers first so a newly installed dispatcher never sees missing modules.
+  for (const name of ['archive-state.js', 'archive-store.js', 'claude-files.js', 'archive.js', 'package.json', 'sync.js']) {
+    const dst = path.join(BASE(), name), source = fs.readFileSync(path.join(path.dirname(__filename), name));
+    try { if (fs.readFileSync(dst).equals(source)) continue; } catch {}
+    atomicWrite(dst, source);
+  }
 }
 
 function installGitHooks() {
@@ -749,9 +768,13 @@ async function setup(argv) {
       if (!fs.existsSync(path.join(root, '.git'))) {
         fs.mkdirSync(path.dirname(root), { recursive: true });
         // stdin/stdout stay attached so git's sign-in (browser or prompt) works the first time; stderr is shown only on failure.
-        const r = spawnSync('git', ['clone', '-q', '-c', 'core.autocrlf=false', store.github, root], { stdio: ['inherit', 'inherit', 'pipe'], encoding: 'utf8', env: { ...process.env, MEM_MASTERO_INHIBIT: '1' } });
+        const r = spawnSync('git', ['clone', '-q', '--single-branch', '--no-tags', '-c', 'core.autocrlf=false', store.github, root], { stdio: ['inherit', 'inherit', 'pipe'], encoding: 'utf8', env: { ...process.env, MEM_MASTERO_INHIBIT: '1' } });
         if (r.status !== 0) throw new Error(`couldn't clone ${store.github}: ${(r.stderr || '').trim()}\nCheck you can access it with that account, then run setup again.`);
-      } else { git(root, 'remote', 'set-url', 'origin', store.github); exactEol(root); try { git(root, 'pull', '-q', '--rebase'); } catch {} }
+      } else {
+        git(root, 'remote', 'set-url', 'origin', store.github); exactEol(root);
+        const branch = syncBranch(root);
+        try { git(root, 'pull', '-q', '--no-tags', '--rebase', 'origin', branch); } catch {}
+      }
     } else fs.mkdirSync(root, { recursive: true });
     say(`✓ Connected to ${storeName(store)}`);
 
@@ -822,6 +845,22 @@ const GIT_LOCAL_ENV = ['GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_CONFIG', 'GIT_CO
 if (require.main === module) {
   for (const k of GIT_LOCAL_ENV) delete process.env[k];
   const [a, b, ...rest] = process.argv.slice(2);
+  if (['storage', 'archive', 'restore'].includes(a)) {
+    try {
+      require('./archive').runArchiveCommand(a, process.argv.slice(3), {
+        claudeRoot: home('CLAUDE_CONFIG_DIR', '.claude'), memRoot: BASE(),
+        context() {
+          const cwd = process.cwd(), projectId = repoId(cwd);
+          if (!projectId) throw new Error('run this command inside a project with a git origin remote');
+          const store = pickStore(readConfig(), projectId);
+          if (!store?.github) throw new Error('Claude archiving requires a configured private GitHub memory repository');
+          require('./archive-store').repositoryOf(store); // Validate without contacting the cloud for dry runs.
+          return { claudeRoot: home('CLAUDE_CONFIG_DIR', '.claude'), memRoot: BASE(), projectDir: AGENTS.claude.local({}, cwd), projectId, store };
+        },
+      });
+    } catch (e) { console.error(`mem-mastero ${a}: ${e.message}`); process.exitCode = 1; }
+    return;
+  }
   if (a === 'setup') { // interactive; may take a while (sign-in), and failures should exit non-zero
     setup(process.argv.slice(3)).then(() => process.exit(0), e => { console.error(`mem-mastero setup: ${e.message}`); process.exit(1); });
     return;
@@ -836,6 +875,12 @@ if (require.main === module) {
   setup                  connect this machine (create or reconnect a memory repo, personal or work)
   update                 update installed plugins and the Git-hook script; keep your stores
   status                 show your stores and where this repo's memory goes
+  storage [--json]        measure local Claude and mem-mastero storage
+  archive --dry-run       preview inactive Claude sessions older than 30 days
+  archive --session ID    upload, verify, then remove one stopped Claude session
+  archive --list          list this project's cloud archive revisions
+  archive --recover       recover originals from an interrupted archive
+  restore ID             restore a Claude archive (optional: --revision SHA256)
   install-git-hooks      sync on git push / pull / clone      (uninstall-git-hooks to undo)
   <agent> start|push|pull  sync one repo now (agent: claude, codex, copilot, pi)`);
     else

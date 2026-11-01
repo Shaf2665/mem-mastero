@@ -23,6 +23,7 @@ Run that one command on every machine and you're done. Projects are matched by t
 - [Supported agents](#supported-agents)
 - [Setup](#setup)
 - [Updating](#updating)
+- [Storage and Claude session archives](#storage-and-claude-session-archives)
 - [Personal and work accounts](#personal-and-work-accounts)
 - [How it works](#how-it-works)
 - [Resuming a session on another machine](#resuming-a-session-on-another-machine)
@@ -121,6 +122,59 @@ If one agent fails to update, the other updates still run and the command report
 
 Disabled Codex installations are left disabled and skipped. Pi updates cover its global package list; project-local Pi packages still use Pi's own update command from that project.
 
+## Storage and Claude session archives
+
+**Available in v0.10.0.** Measure local storage, then explicitly archive inactive Claude Code sessions to your configured private GitHub memory repository. Update mem-mastero on every machine first. Archiving is optional; hooks do not automatically remove sessions.
+
+Run these commands from the project repository:
+
+```bash
+npx --yes github:Shaf2665/mem-mastero storage
+npx --yes github:Shaf2665/mem-mastero archive --dry-run
+```
+
+`storage` measures logical file bytes across Claude's local data and mem-mastero's local stores, including existing clones and their Git history. It works without cloud access. Add `--json` for individual categories and unreadable-path errors. Logical bytes can differ from filesystem space used because of compression, sparse files, or allocation sizes.
+
+`archive --dry-run` lists this project's sessions last modified more than **30 days** ago and their candidate reclaimable bytes. Select a different age with `--older-than 14`, or inspect one session with `--session <id> --dry-run`. A preview does not upload or remove session files.
+
+**Close all Claude Code and Claude desktop processes before archiving or restoring**, and keep them closed until the command finishes. Then, in a regular terminal:
+
+```bash
+# Archive one session and remove its verified local copy
+npx --yes github:Shaf2665/mem-mastero archive --session <id>
+
+# Or archive this project's sessions older than 30 days
+npx --yes github:Shaf2665/mem-mastero archive --older-than 30
+
+# List cloud archives, including revision hashes
+npx --yes github:Shaf2665/mem-mastero archive --list
+
+# Restore the latest archived revision of a session
+npx --yes github:Shaf2665/mem-mastero restore <id>
+claude --resume <id>
+```
+
+Use `restore <id> --revision <hash>` to choose a specific archived revision. Restore preserves original file bytes and gives restored files fresh modification times so Claude's age-based cleanup does not immediately remove them. It refuses to overwrite different local contents.
+
+### What makes removal safe
+
+- The complete snapshot is uploaded, downloaded again from its committed cloud revision, and checked against its manifest and file hashes **before local session files are removed**. A local commit or an upload request alone is insufficient.
+- The command checks that Claude is stopped and that source files have not changed. Failed uploads, failed verification, or uncertain activity keep the local source files.
+- Session transcripts and discovered session-specific companion files are archived together, including subagent data, saved tool results, and file-history checkpoints. Durable auto-memory stays local. Files in your working project or external temporary directories are outside the archive.
+- A local archive record prevents ordinary sync from downloading that session on this machine, including after a restore. Local edits to a restored session can still upload; select a cloud archive revision explicitly to restore it. Other machines retain their own copies and need their own explicit archive operation to release space. Update every installed copy of the plugin, including cached agent installations, before using archives.
+
+If an archive is interrupted during local removal, keep Claude closed and run `npx --yes github:Shaf2665/mem-mastero archive --recover`. It recovers remaining originals from local quarantine without cloud access and refuses to overwrite conflicting files. Then use `restore <id>` if some files were already removed after verification. Restore also attempts pending local recovery first. **Do not manually delete recovery directories**: they may contain newer local files that were not part of the verified archive.
+
+### Storage and compatibility limits
+
+Archives live on the `mem-mastero-archives-v1` branch in the selected private memory repository. They are uploaded and downloaded through GitHub's API, without a permanent local archive clone. The repository must already have a branch from a normal sync; archiving requires authenticated `gh` and network access. Drive and local-folder stores are not archive backends in this version.
+
+Existing memory clones, their Git history, and previous copies in the ordinary sync branch are retained. The storage report includes them; the reported archive saving covers native session files, not a cleanup of all historical copies. Temporary upload and verification space is also required during an archive operation.
+
+GitHub API limits or incomplete archive listings stop the operation instead of guessing. Uncached archives cannot be restored offline. This version provides explicit archive/list/restore commands; graph search, automatic recall, automatic retention, and cloud entries in Claude's native resume picker are not included.
+
+In Claude Code or Copilot CLI, `/mem-mastero:storage` shows the report. `/mem-mastero:archive` and `/mem-mastero:restore` help prepare the terminal commands; close Claude before running commands that remove or restore files.
+
 ## Personal and work accounts
 
 Run `setup` once per account. A work memory repo takes **only** the projects you list for it; everything else goes to your personal one.
@@ -181,7 +235,7 @@ mem-mastero.json                           which projects this store holds
 - **Overlapping hooks on one machine are serialized** for both Git and folder stores. Locks stay local and are not uploaded.
 - **Claude memory updates arrive immediately.** If Claude's `MEMORY.md` changed on another device, the fresh copy is handed to the new session at startup.
 - **Sync errors do not fail your agent or `git` command.** Uploads are retried on the next push event even if no file changed. `status` shows the last recorded background upload failure until a successful retry.
-- **No dependencies:** one Node script and git.
+- **No package dependencies:** Node.js and git, plus authenticated `gh` for GitHub stores.
 
 ### Big sessions (over 100 MB)
 
@@ -216,7 +270,7 @@ Pull first: `git pull`, or start a new agent session in the repo. The session is
 - **Invalid configuration stops sync.** A malformed or unreadable configuration never falls back to another store. A missing configuration still allows legacy Drive autodetection.
 - **Work projects belong in a work store.** Use [`for` rules](#personal-and-work-accounts) so company memory never goes to a personal account, and check your employer's policy on where transcripts may be stored.
 - **mem-mastero stores no tokens or passwords.** Sign-in is handled by GitHub CLI and Git Credential Manager.
-- **Some files never leave your machine:** agent lock files (`*.lock`, `*.hold`) and anything outside a repo's own session folders.
+- **Some files never leave your machine:** agent lock files (`*.lock`, `*.hold`) and unrelated sessions. Explicit Claude archives can also include that session's companion data and file-history checkpoints outside its project transcript folder.
 - **The git hooks only ever write to your memory repos.** Since v0.7.1, mem-mastero clears the repo variables git sets for hooks (`GIT_DIR` and others) before it does anything. A regression test checks that a pushed repo never receives a mem-mastero commit.
 
 ## Command reference
@@ -228,6 +282,12 @@ Everything is available through `npx github:Shaf2665/mem-mastero <command>`. Aft
 | `setup` | Connect this machine: create or reconnect a memory repo, install the plugin into your agents, turn on git sync |
 | `update` | Download the latest code, update existing agent plugins, and refresh enabled Git sync while keeping your configuration |
 | `status` | Show your stores, where the current repo's memory goes, and whether git sync is on |
+| `storage [--json]` | Measure Claude and mem-mastero local storage without cloud access |
+| `archive --dry-run [--older-than DAYS]` | Preview this project's Claude sessions eligible by age (default 30 days) |
+| `archive --session ID` / `archive --older-than DAYS` | Upload and verify Claude session archives, then remove their local native files; Claude must be closed |
+| `archive --list` | List this project's cloud session archives and revision hashes |
+| `archive --recover` | Recover remaining originals from an interrupted local removal without cloud access; Claude must be closed |
+| `restore ID [--revision HASH]` | Restore a verified Claude archive without overwriting different local files; Claude must be closed |
 | `install-git-hooks` / `uninstall-git-hooks` | Turn sync on `git push` / `pull` / `clone` on or off |
 | `<agent> start` \| `push` \| `pull` | Sync one repo now, for `claude`, `codex`, `copilot` or `pi` (run inside the repo) |
 | `help` | List the commands |
@@ -285,7 +345,7 @@ Environment variables:
 | Want to see what a hook received | Set `MEM_MASTERO_LOG=/path/to/log.jsonl` and start your agent. |
 
 **Known limits:**
-- **Deletes don't propagate.** A session removed on one machine comes back from another; delete it in the memory repo too.
+- **Ordinary deletes don't propagate.** A manually removed session comes back from another copy. Explicit Claude archiving records an exception locally so its legacy copy stays evicted on that machine.
 - **`git fetch` alone triggers nothing,** and neither does a `git pull` that says "Already up to date". Memory still arrives when you next start your agent.
 - **Repos with their own local `core.hooksPath`** (for example Husky) don't get git-triggered sync. Agent sync still covers them.
 - **Don't run the same session on two machines at once.** The last writer wins.

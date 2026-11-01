@@ -16,7 +16,8 @@ Object.assign(env, {
 });
 try {
   for (const args of [
-    ['test.js'], ['test-integrity.js'], ['test-privacy.js'], ['test-recovery.js'], ['test-update.js'], ['.github/announce.js', '--test'],
+    ['test.js'], ['test-integrity.js'], ['test-privacy.js'], ['test-recovery.js'], ['test-update.js'],
+    ['test-claude-files.js'], ['test-archive-store.js'], ['test-archive.js'], ['test-archive-adversarial.js'], ['test-archive-sync.js'], ['.github/announce.js', '--test'],
   ]) {
     console.log(`Testing ${args[0]}`);
     const result = spawnSync(process.execPath, args, { cwd: __dirname, env, stdio: ['ignore', 'inherit', 'inherit'], timeout: 180000 });

@@ -73,6 +73,7 @@ let uploads = 0, commits = 0, networkPushes = 0, errors = 0, cleared = 0;
 let pushUrls = ['https://github.com/example/private-memory.git', 'https://github.com/example/public-memory.git'];
 let failUpload = false;
 const mockGit = (dir, ...args) => {
+  if (args[0] === 'symbolic-ref') return 'main';
   if (args[0] === 'remote') return args.includes('--push') ? pushUrls.join('\n') : 'https://github.com/example/private-memory.git';
   if (args[0] === 'push') { networkPushes++; if (failUpload) throw new Error('offline'); }
   return '';
