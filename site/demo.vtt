@@ -1,0 +1,93 @@
+WEBVTT
+
+1
+00:00:00.650 --> 00:00:01.756
+Switch machines.
+
+2
+00:00:02.271 --> 00:00:03.430
+Keep your coding history.
+
+3
+00:00:04.347 --> 00:00:07.940
+Mem Maestro syncs your agent's original sessions and memory
+
+4
+00:00:07.940 --> 00:00:11.729
+through a private GitHub repository or your Google Drive.
+
+5
+00:00:12.190 --> 00:00:14.125
+It follows the project's Git remote,
+
+6
+00:00:14.431 --> 00:00:15.983
+even when the folder path changes.
+
+7
+00:00:16.481 --> 00:00:18.026
+Start your agent to sync,
+
+8
+00:00:18.351 --> 00:00:21.236
+or use the optional Git push and pull hooks.
+
+9
+00:00:21.783 --> 00:00:26.996
+Claude Code, Codex, Copilot CLI, and Pi are supported,
+
+10
+00:00:27.172 --> 00:00:27.991
+with Pi in beta.
+
+11
+00:00:28.506 --> 00:00:29.609
+Need more disk space?
+
+12
+00:00:30.065 --> 00:00:33.586
+Measure what's stored, then preview old Claude sessions.
+
+13
+00:00:33.984 --> 00:00:36.725
+Close Claude and archive the sessions you choose
+
+14
+00:00:36.725 --> 00:00:39.002
+to your private GitHub repository.
+
+15
+00:00:39.526 --> 00:00:41.553
+Mem Maestro uploads the archive,
+
+16
+00:00:41.989 --> 00:00:44.433
+downloads it again, and verifies every file
+
+17
+00:00:44.433 --> 00:00:46.231
+before removing local copies.
+
+18
+00:00:46.754 --> 00:00:49.960
+Existing Git clones and history stay in place.
+
+19
+00:00:50.611 --> 00:00:51.948
+Need that conversation again?
+
+20
+00:00:52.413 --> 00:00:55.666
+Restore the original session, then resume in Claude.
+
+21
+00:00:56.037 --> 00:00:58.323
+Set up Mem Maestro on each machine.
+
+22
+00:00:58.766 --> 00:01:00.556
+Your history follows your project.
+
+23
+00:01:00.884 --> 00:01:03.066
+Old sessions stay recoverable.

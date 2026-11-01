@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>mem-mastero</title>
-<meta name="description" content="Sync coding-agent sessions and memory for each repo across machines via your Google Drive or a private GitHub repo.">
+<meta name="description" content="Sync coding-agent sessions across machines using your own storage. Measure local space and safely archive and restore Claude Code sessions.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧠</text></svg>">
 <style>
   :root {
@@ -64,20 +64,23 @@
     <a href="https://github.com/Shaf2665/mem-mastero#readme">Documentation</a>
   </div>
 
-  <video src="demo.mp4" controls muted playsinline preload="metadata"></video>
+  <video src="demo.mp4" poster="demo-poster.jpg" controls playsinline preload="metadata" aria-label="Mem-mastero: session sync, storage reporting, and safe Claude archives">
+    <track kind="captions" src="demo.vtt" srclang="en" label="English">
+    <a href="demo.mp4">Watch the Mem-mastero demo</a>
+  </video>
 
-  <p>Claude Code, Codex, Copilot CLI and Pi keep your chat history and memory <strong>on the machine where you worked</strong>. Clone the same repo on another laptop and the agent starts from zero.</p>
-  <p>mem-mastero syncs that history through storage <strong>you own</strong>, either a <strong>private GitHub repo</strong> or <strong>Google Drive</strong>. It syncs when your agent starts and finishes a turn, and also when you <code>git push</code> and <code>git pull</code>.</p>
+  <p>Claude Code, Codex, Copilot CLI and Pi keep session history locally. mem-mastero brings those original sessions and memory files to your other machines.</p>
+  <p>It syncs through storage <strong>you own</strong>, either a <strong>private GitHub repo</strong> or <strong>Google Drive</strong>. Sync runs through agent lifecycle hooks. Optional Git hooks also sync when you <code>git push</code>, <code>git pull</code> or <code>git clone</code>.</p>
 
   <h2>Get started</h2>
   <p>Requires <a href="https://nodejs.org">Node.js</a> 18.17+ and <a href="https://git-scm.com">git</a>. For the GitHub option, <a href="https://cli.github.com">GitHub CLI</a> signed in with <code>gh auth login</code>.</p>
   <pre><code>npx github:Shaf2665/mem-mastero setup</code></pre>
   <p>Run that one command on every machine. Projects are matched by their <strong>git remote</strong>, not their folder path, so <code>D:\Work\app</code> on your PC and <code>~/code/app</code> on your Mac share the same sessions.</p>
-  <p>That one command does three things:</p>
+  <p>Setup walks through three steps:</p>
   <ol>
     <li><strong>Connects your memory repo.</strong> It finds the repo on the account you picked, or creates it as private.</li>
     <li><strong>Installs the plugin</strong> into every coding agent it finds: Claude Code, Codex, Copilot CLI and Pi.</li>
-    <li><strong>Turns on sync for <code>git push</code> / <code>git pull</code> / <code>git clone</code></strong>, for every repo on the machine.</li>
+    <li><strong>Offers optional sync for <code>git push</code> / <code>git pull</code> / <code>git clone</code></strong>, for every repo on the machine.</li>
   </ol>
 
   <h2>Supported agents</h2>
@@ -96,6 +99,13 @@
     </table>
   </div>
 
+  <h2>Measure storage. Archive Claude sessions safely.</h2>
+  <p>See how much space sessions, companion files and existing memory clones use. Preview old sessions before choosing what to archive:</p>
+  <pre><code>npx --yes github:Shaf2665/mem-mastero storage
+npx --yes github:Shaf2665/mem-mastero archive --dry-run</code></pre>
+  <p>With Claude closed, explicitly archive a session to your private GitHub memory repository. mem-mastero uploads it, downloads the cloud copy and verifies every file before removing unchanged local session files. Restore the archive when you need to resume that conversation.</p>
+  <p>Archiving currently supports <strong>Claude Code with private GitHub storage</strong>. Durable auto-memory stays local; existing memory clones and Git history are retained. <a href="https://github.com/Shaf2665/mem-mastero#storage-and-claude-session-archives">Archive and restore instructions</a></p>
+
   <h2>Personal and work accounts</h2>
   <p>Run <code>setup</code> once per account. A work memory repo takes only the projects you list for it; everything else goes to your personal one, so company memory stays in the company account.</p>
 
@@ -103,7 +113,7 @@
   <ul>
     <li><strong>Transcripts can contain anything</strong> you pasted or a tool printed. Store them only in a <strong>private</strong> repo, or a Drive you control.</li>
     <li><strong>mem-mastero stores no tokens or passwords.</strong> Sign-in is handled by GitHub CLI and Git Credential Manager.</li>
-    <li><strong>No dependencies:</strong> one Node script and git.</li>
+    <li><strong>No npm dependencies or server to manage.</strong> Uses Node.js and Git, plus authenticated GitHub CLI for GitHub storage.</li>
   </ul>
 
   <footer>

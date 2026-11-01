@@ -2,13 +2,13 @@
 
 **Your coding agent's sessions and memory follow each repo across every machine.**
 
-https://github.com/user-attachments/assets/35518702-83cb-4cb6-9a97-68fed34d2910
+[![Watch the Mem-mastero explainer](site/demo-poster.jpg)](site/demo.mp4)
 
-<sub>Video file: [`site/demo.mp4`](site/demo.mp4)</sub>
+<sub>[Watch the 65-second narrated demo](site/demo.mp4) · English captions included · [Video source](video/README.md)</sub>
 
 Claude Code, Codex, Copilot CLI and Pi keep your chat history and memory **on the machine where you worked**. Clone the same repo on another laptop and the agent starts from zero.
 
-mem-mastero syncs that history through storage **you own**, either a **private GitHub repo** or **Google Drive**. It syncs when your agent starts and finishes a turn, and also when you `git push` and `git pull`.
+mem-mastero syncs that history through storage **you own**, either a **private GitHub repo** or **Google Drive**. It syncs through your agent's lifecycle hooks. With optional Git sync enabled, it also syncs when you `git push` and `git pull`.
 
 ```bash
 npx github:Shaf2665/mem-mastero setup
@@ -82,10 +82,10 @@ mem-mastero stores:
 Git push/pull sync: on
 ```
 
-That one command does three things:
+Setup walks through three steps:
 1. **Connects your memory repo.** It finds the repo on the account you picked, or creates it as **private**. Existing GitHub repositories are checked for private visibility too. With no GitHub CLI, press Enter at the repo URL prompt to use Google Drive.
 2. **Installs the plugin** into every coding agent it finds: Claude Code, Codex, Copilot CLI and Pi.
-3. **Turns on sync for `git push` / `git pull` / `git clone`**, for every repo on the machine.
+3. **Offers optional sync for `git push` / `git pull` / `git clone`**, for every repo on the machine.
 
 **On a second laptop** the same command finds the existing repo and reconnects. Which projects belong to which repo is stored in the repo itself, so it asks nothing about that.
 

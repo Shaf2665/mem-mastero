@@ -1,0 +1,19 @@
+Switch machines. Keep your coding history.
+
+Mem Maestro syncs your agent's original sessions and memory through a private GitHub repository or your Google Drive.
+
+It follows the project's Git remote, even when the folder path changes.
+
+Start your agent to sync, or use the optional Git push and pull hooks.
+
+Claude Code, Codex, Copilot CLI, and Pi are supported, with Pi in beta.
+
+Need more disk space? Measure what's stored, then preview old Claude sessions.
+
+Close Claude and archive the sessions you choose to your private GitHub repository.
+
+Mem Maestro uploads the archive, downloads it again, and verifies every file before removing local copies. Existing Git clones and history stay in place.
+
+Need that conversation again? Restore the original session, then resume in Claude.
+
+Set up Mem Maestro on each machine. Your history follows your project. Old sessions stay recoverable.

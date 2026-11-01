@@ -1,0 +1,121 @@
+{
+  "playbackRate": 1.08,
+  "leadSeconds": 0.65,
+  "cues": [
+    {
+      "start": 0.65,
+      "end": 1.756,
+      "text": "Switch machines."
+    },
+    {
+      "start": 2.271,
+      "end": 3.43,
+      "text": "Keep your coding history."
+    },
+    {
+      "start": 4.347,
+      "end": 7.94,
+      "text": "Mem Maestro syncs your agent's original sessions and memory"
+    },
+    {
+      "start": 7.94,
+      "end": 11.729,
+      "text": "through a private GitHub repository or your Google Drive."
+    },
+    {
+      "start": 12.19,
+      "end": 14.125,
+      "text": "It follows the project's Git remote,"
+    },
+    {
+      "start": 14.431,
+      "end": 15.983,
+      "text": "even when the folder path changes."
+    },
+    {
+      "start": 16.481,
+      "end": 18.026,
+      "text": "Start your agent to sync,"
+    },
+    {
+      "start": 18.351,
+      "end": 21.236,
+      "text": "or use the optional Git push and pull hooks."
+    },
+    {
+      "start": 21.783,
+      "end": 26.996,
+      "text": "Claude Code, Codex, Copilot CLI, and Pi are supported,"
+    },
+    {
+      "start": 27.172,
+      "end": 27.991,
+      "text": "with Pi in beta."
+    },
+    {
+      "start": 28.506,
+      "end": 29.609,
+      "text": "Need more disk space?"
+    },
+    {
+      "start": 30.065,
+      "end": 33.586,
+      "text": "Measure what's stored, then preview old Claude sessions."
+    },
+    {
+      "start": 33.984,
+      "end": 36.725,
+      "text": "Close Claude and archive the sessions you choose"
+    },
+    {
+      "start": 36.725,
+      "end": 39.002,
+      "text": "to your private GitHub repository."
+    },
+    {
+      "start": 39.526,
+      "end": 41.553,
+      "text": "Mem Maestro uploads the archive,"
+    },
+    {
+      "start": 41.989,
+      "end": 44.433,
+      "text": "downloads it again, and verifies every file"
+    },
+    {
+      "start": 44.433,
+      "end": 46.231,
+      "text": "before removing local copies."
+    },
+    {
+      "start": 46.754,
+      "end": 49.96,
+      "text": "Existing Git clones and history stay in place."
+    },
+    {
+      "start": 50.611,
+      "end": 51.948,
+      "text": "Need that conversation again?"
+    },
+    {
+      "start": 52.413,
+      "end": 55.666,
+      "text": "Restore the original session, then resume in Claude."
+    },
+    {
+      "start": 56.037,
+      "end": 58.323,
+      "text": "Set up Mem Maestro on each machine."
+    },
+    {
+      "start": 58.766,
+      "end": 60.556,
+      "text": "Your history follows your project."
+    },
+    {
+      "start": 60.884,
+      "end": 63.066,
+      "text": "Old sessions stay recoverable."
+    }
+  ]
+}
